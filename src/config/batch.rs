@@ -1,30 +1,14 @@
-pub mod eth;
-pub mod ip;
-
-pub mod protocol;
-
-pub mod payload;
+pub mod data;
+pub mod ovr_opts;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::batch::{payload::PayloadOpts, protocol::ProtocolOpts};
+use crate::config::batch::{data::BatchData, ovr_opts::BatchOverrideOpts};
 
-#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct Batch {
-    pub name: Option<String>,
-
-    pub iface: Option<String>,
-
-    pub wait_for_finish: bool,
-
-    pub max_pkt: Option<u64>,
-    pub max_byt: Option<u64>,
-
-    pub duration: Option<u64>,
-    pub send_interval: Option<u64>,
-
-    pub thread_cnt: Option<u16>,
-
-    pub protocol: ProtocolOpts,
-    pub payload: PayloadOpts,
+    #[serde(rename = "overrides")]
+    pub ovr_opts: Option<BatchOverrideOpts>,
+    pub batches: Vec<BatchData>,
 }

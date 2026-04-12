@@ -1,4 +1,4 @@
-use crate::config::batch::payload::PayloadOpts as PayloadOptsCfg;
+use crate::config::batch::data::payload::PayloadOpts as PayloadOptsCfg;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PayloadOpts {

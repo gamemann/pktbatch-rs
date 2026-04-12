@@ -1,8 +1,8 @@
-use pnet::packet::{tcp::TcpFlags};
+use pnet::packet::tcp::TcpFlags;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TcpOpts {
     pub src_port: Option<u16>,

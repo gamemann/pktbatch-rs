@@ -1,1 +1,3 @@
 /target
+*.json
+!conf.ex.json

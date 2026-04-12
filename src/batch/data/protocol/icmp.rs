@@ -1,8 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::config::batch::data::protocol::icmp::IcmpOpts;
 
-use crate::config::batch::protocol::icmp::IcmpOpts;
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProtocolIcmp {
     pub icmp_type: u8,
     pub icmp_code: u8,

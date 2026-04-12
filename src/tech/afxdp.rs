@@ -1,5 +1,5 @@
 use crate::{
-    config::tech::afxdp::TechAfXdp as TechAfXdpRaw,
+    config::tech::afxdp::TechAfXdpOpts as TechAfXdpRaw,
     tech::{afxdp::opt::AfXdpOpts, base::TechBase},
 };
 

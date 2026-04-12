@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct TechAfXdp {
+pub struct TechAfXdpOpts {
     pub queue_id: Option<u16>,
     pub need_wakeup: bool,
     pub shared_umem: bool,
@@ -10,7 +10,7 @@ pub struct TechAfXdp {
     pub zero_copy: bool,
 }
 
-impl Default for TechAfXdp {
+impl Default for TechAfXdpOpts {
     fn default() -> Self {
         Self {
             queue_id: None,

@@ -1,13 +1,13 @@
 use crate::{
-    batch::protocol::{icmp::ProtocolIcmp, tcp::ProtocolTcp, udp::ProtocolUdp},
-    config::batch::protocol::ProtocolOpts as ProtocolOptsCfg,
+    batch::data::protocol::{icmp::ProtocolIcmp, tcp::ProtocolTcp, udp::ProtocolUdp},
+    config::batch::data::protocol::ProtocolOpts as ProtocolOptsCfg,
 };
 
 pub mod icmp;
 pub mod tcp;
 pub mod udp;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolOpts {
     Tcp(ProtocolTcp),
     Udp(ProtocolUdp),

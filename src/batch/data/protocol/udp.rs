@@ -1,8 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::config::batch::data::protocol::udp::UdpOpts;
 
-use crate::config::batch::protocol::udp::UdpOpts;
-
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProtocolUdp {
     pub src_port: Option<u16>,
     pub dst_port: Option<u16>,

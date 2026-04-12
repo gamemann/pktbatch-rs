@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::logger::level::LogLevel;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Logger {
     pub level: Option<LogLevel>,

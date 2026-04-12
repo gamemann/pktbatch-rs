@@ -1,8 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::config::batch::data::protocol::tcp::TcpOpts;
 
-use crate::config::batch::protocol::tcp::TcpOpts;
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum TcpFlags {
     // These aren't the real TCP flag values!! Just for configuration
     SYN = 1 << 0,
@@ -15,7 +13,7 @@ enum TcpFlags {
     CWR = 1 << 7,
 }
 
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProtocolTcp {
     pub src_port: Option<u16>,
     pub dst_port: Option<u16>,

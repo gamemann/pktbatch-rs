@@ -1,8 +1,8 @@
-use crate::config::batch::ip::IpOpts as IpOptsCfg;
+use crate::config::batch::data::ip::IpOpts as IpOptsCfg;
 
 pub mod source;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IpOpts {
     pub src: Option<Vec<String>>,
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PayloadOpts {
     pub len_min: Option<u16>,
@@ -18,9 +18,11 @@ impl Default for PayloadOpts {
         PayloadOpts {
             len_min: Some(0),
             len_max: Some(500),
+
             is_static: false,
             is_file: false,
             is_string: false,
+
             exact: None,
         }
     }
