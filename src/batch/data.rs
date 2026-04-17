@@ -1,9 +1,11 @@
 pub mod eth;
+pub mod exec;
 pub mod ip;
 pub mod payload;
 pub mod protocol;
 
 use anyhow::Result;
+use pnet::packet::{MutPacketData, PacketData};
 
 use crate::{
     batch::{
@@ -37,9 +39,10 @@ pub struct BatchData {
     pub opt_protocol: ProtocolOpts,
 
     pub opt_payload: Option<PayloadOpts>,
-}
 
-pub type Batch = BatchData;
+    pub state_static_pkt: Option<Vec<u8>>,
+    pub state_static_payload: Option<Vec<u8>>,
+}
 
 impl BatchData {
     pub fn new(
@@ -71,14 +74,12 @@ impl BatchData {
             opt_ip,
             opt_protocol,
             opt_payload,
+            state_static_pkt: None,
+            state_static_payload: None,
         }
     }
 
-    pub fn start(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    pub fn stop(&mut self) -> Result<()> {
+    pub fn gen_pkt_from_data(&self, pkt: &mut MutPacketData) -> Result<()> {
         Ok(())
     }
 }

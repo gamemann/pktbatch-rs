@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::{
     batch::{data::BatchData, ovr_opts::OvrOpts},
     config::batch::Batch as BatchCfg,
+    context::Context,
 };
 
 #[derive(Clone, Default)]
@@ -24,11 +25,19 @@ impl BatchBase {
         }
     }
 
-    pub fn start(&mut self) -> Result<()> {
-        Ok(())
-    }
+    pub async fn start_batches(&mut self, ctx: Context) -> Result<()> {
+        let logger = &ctx.logger;
 
-    pub fn stop(&mut self) -> Result<()> {
+        for (i, batch) in self.batches.iter_mut().enumerate() {
+            batch.exec(ctx.clone(), i as u16).map_err(|e| {
+                logger
+                    .blocking_read()
+                    .log_msg(LogLevel::Error, &format!("Batch execution failed: {}", e))
+                    .ok();
+
+                anyhow!("Batch execution failed: {}", e)
+            })?;
+        }
         Ok(())
     }
 }
