@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use crate::{
     batch::{data::BatchData, ovr_opts::OvrOpts},
     config::batch::Batch as BatchCfg,
     context::Context,
+    logger::level::LogLevel,
 };
 
 #[derive(Clone, Default)]

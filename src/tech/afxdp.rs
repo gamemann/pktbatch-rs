@@ -3,8 +3,6 @@ pub mod socket;
 
 use std::{
     collections::HashMap,
-    ops::Deref,
-    os::unix::thread,
     sync::{Arc, Mutex},
 };
 
@@ -12,8 +10,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 
 use crate::{
-    config::tech::afxdp::TechAfXdpOpts as AfXdpOptsCfg,
+    config::tech::{Tech as TechCfg, afxdp::TechAfXdpOpts as AfXdpOptsCfg},
     context::Context,
+    logger::level::LogLevel,
     tech::{
         afxdp::{
             opt::AfXdpOpts,
@@ -31,7 +30,7 @@ pub struct TechAfXdp {
 }
 
 pub struct AfXdpData {
-    pub socket: XskTxSocket,
+    pub socket: Mutex<XskTxSocket>,
 }
 
 #[async_trait]
@@ -55,26 +54,21 @@ impl TechExt for TechAfXdp {
         self
     }
 
-    async fn init(&mut self, ctx: Context) -> anyhow::Result<()> {
-        // We need to create sockets based off of thread count.
-        let thread_cnt = if self.opts.thread_cnt > 0 {
-            self.opts.thread_cnt
-        } else {
-            get_cpu_count() as u16
-        };
+    async fn init(&mut self, ctx: Context) -> Result<()> {
+        // We need to determine the number of sockets to create.
+        let sock_cnt = self
+            .opts
+            .sock_cnt
+            .unwrap_or_else(|| get_cpu_count().max(1) as u16);
 
         let cfg = &ctx.cfg;
         let logger = &ctx.logger;
-        let batch = &ctx.batch;
+        //let batch = &ctx.batch;
 
         // Create tech from config.
-        let tech: AfXdpOptsCfg = cfg
-            .read()
-            .await
-            .tech
-            .clone()
-            .try_into()
-            .map_err(|e| anyhow!("Failed to convert tech config for initialization: {}", e))?;
+        let tech = match cfg.read().await.tech.clone() {
+            TechCfg::AfXdp(opts) => AfXdpOptsCfg::from(opts.clone()),
+        };
 
         // We need to retrieve the interface name.
         let if_name = if let Some(name) = tech.if_name {
@@ -90,25 +84,33 @@ impl TechExt for TechAfXdp {
                 .and_then(|src_vec| src_vec.first())
                 .ok_or_else(|| anyhow!("No source IP found to derive interface name"))?;
 
-            get_ifname_from_src_ip(src_ip)
-                .ok_or_else(|| anyhow!("Could not find interface for IP {}", src_ip))?
+            match get_ifname_from_src_ip(src_ip) {
+                Ok(name) => name,
+                Err(e) => {
+                    return Err(anyhow!(
+                        "Could not find interface for IP '{}': {}",
+                        src_ip,
+                        e
+                    ));
+                }
+            }
         };
 
         // Create hash map for sockets.
         let mut sock_map = HashMap::new();
 
-        for i in 0..thread_cnt {
+        for i in 0..sock_cnt {
             let queue_id = self.opts.queue_id.unwrap_or(i);
             let t_id = i + 1;
 
             // Create XSK socket.
-            let xsk_cfg = XskTxConfig::from(self.opts.clone());
+            let mut xsk_cfg = XskTxConfig::from(self.opts.clone());
 
             xsk_cfg.if_name = if_name.clone();
             xsk_cfg.queue_id = queue_id;
 
             let socket = XskTxSocket::new(xsk_cfg)
-                .map_err(|e| async {
+                .map_err(|e| async move {
                     // Log the error but continue trying to create sockets for other threads (don't want to fail the entire batch if one socket fails).
                     logger
                         .read()
@@ -134,18 +136,18 @@ impl TechExt for TechAfXdp {
         Ok(())
     }
 
-    fn pkt_send(&mut self, ctx: Context, pkt: &[u8], data: Self::TechData) -> Result<()> {
-        let mut sock = data.socket;
+    fn pkt_send(&mut self, _ctx: Context, pkt: &[u8], data: Self::TechData) -> Result<()> {
+        let mut sock = data.socket.lock().unwrap();
 
-        sock.send_batch_single(pkt)
+        sock.send_repeated(pkt)
             .map_err(|e| anyhow!("failed to send packet: {}", e))?;
 
         Ok(())
     }
 }
 
-impl From<TechAfXdpRaw> for TechAfXdp {
-    fn from(afxdp: TechAfXdpRaw) -> Self {
+impl From<AfXdpOptsCfg> for TechAfXdp {
+    fn from(afxdp: AfXdpOptsCfg) -> Self {
         Self {
             sockets: Arc::new(HashMap::new()),
             opts: AfXdpOpts::new(
@@ -154,6 +156,7 @@ impl From<TechAfXdpRaw> for TechAfXdp {
                 afxdp.shared_umem,
                 afxdp.batch_size,
                 afxdp.zero_copy,
+                afxdp.sock_cnt,
             ),
         }
     }

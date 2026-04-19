@@ -5,6 +5,7 @@ pub struct AfXdpOpts {
     pub shared_umem: bool,
     pub batch_size: u32,
     pub zero_copy: bool,
+    pub sock_cnt: Option<u16>,
 }
 
 impl Default for AfXdpOpts {
@@ -14,7 +15,8 @@ impl Default for AfXdpOpts {
             need_wakeup: false,
             shared_umem: false,
             batch_size: 64,
-            zero_copy: false, // true is best for performance, but it requires a supported driver and kernel version, so we default to false for better compatibility
+            zero_copy: false, // true is best for performance, but it requires a supported driver and kernel version, so we default to false for better compatibility,
+            sock_cnt: None,   // Auto
         }
     }
 }
@@ -26,6 +28,7 @@ impl AfXdpOpts {
         shared_umem: bool,
         batch_size: u32,
         zero_copy: bool,
+        sock_cnt: Option<u16>,
     ) -> Self {
         Self {
             queue_id,
@@ -33,6 +36,7 @@ impl AfXdpOpts {
             shared_umem,
             batch_size,
             zero_copy,
+            sock_cnt,
         }
     }
 }

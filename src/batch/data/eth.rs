@@ -3,9 +3,10 @@ use pnet::packet::ethernet::MutableEthernetPacket;
 
 use crate::{
     config::batch::data::eth::EthOpts as EthOptsCfg,
-    context::Context,
     util::{get_gw_mac, get_mac_addr_from_str},
 };
+
+pub const ETH_HDR_LEN: usize = 14;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EthOpts {
@@ -55,5 +56,34 @@ impl EthOpts {
                 )),
             },
         }
+    }
+
+    /// Fills the ethernet header fields initially.
+    ///
+    /// # Arguments
+    /// * `buff` - The buffer to write the ethernet header into.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure of the header filling operation. Errors during MAC address retrieval or buffer manipulation will be returned as `anyhow::Error`.
+    pub fn fill_init(&self, buff: &mut [u8]) -> Result<()> {
+        let src_mac = self.get_src_mac()?;
+        let dst_mac = self.get_dst_mac()?;
+
+        // Write MAC addresses into the buffer.
+        {
+            let mut eth = match MutableEthernetPacket::new(buff) {
+                Some(p) => p,
+                None => {
+                    return Err(anyhow!(
+                        "Failed to create mutable Ethernet packet for header filling"
+                    ));
+                }
+            };
+
+            eth.set_source(src_mac.into());
+            eth.set_destination(dst_mac.into());
+        }
+
+        Ok(())
     }
 }

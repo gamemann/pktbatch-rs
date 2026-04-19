@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::{io::Write, num::NonZeroU32, sync::Arc};
+use std::{io::Write, num::NonZeroU32};
 use xsk_rs::{
     CompQueue, FrameDesc, TxQueue, Umem,
     config::{BindFlags, FrameSize, Interface, QueueSize, SocketConfig, UmemConfig},
@@ -172,7 +172,7 @@ impl XskTxSocket {
         flags
     }
 
-    #[inline]
+    #[inline(always)]
     fn submit_and_drain(&mut self, count: usize) -> Result<()> {
         let submitted = unsafe { self.tx_q.produce(&self.descs[..count]) };
         if submitted == 0 {
@@ -195,7 +195,7 @@ impl XskTxSocket {
     }
 
     /// Send a single packet.
-    #[inline]
+    #[inline(always)]
     pub fn send(&mut self, pkt: &[u8]) -> Result<()> {
         let desc = self
             .descs
@@ -210,7 +210,7 @@ impl XskTxSocket {
     }
 
     /// Send a batch of packets, chunked by `self.batch_size`.
-    #[inline]
+    #[inline(always)]
     pub fn send_batch(&mut self, pkts: &[&[u8]]) -> Result<()> {
         for chunk in pkts.chunks(self.batch_size) {
             let count = chunk.len();
@@ -232,7 +232,7 @@ impl XskTxSocket {
     }
 
     /// Send the same packet repeated `batch_size` times.
-    #[inline]
+    #[inline(always)]
     pub fn send_repeated(&mut self, pkt: &[u8]) -> Result<()> {
         let count = self.batch_size;
 

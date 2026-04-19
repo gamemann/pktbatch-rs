@@ -1,36 +1,34 @@
-use std::{net::IpAddr, str::FromStr, thread};
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Result, anyhow};
-use pnet::{
-    datalink::EtherType,
-    packet::{
-        MutablePacket,
-        ethernet::{EtherTypes, MutableEthernetPacket},
-        ip::IpNextHeaderProtocols,
-        ipv4::MutableIpv4Packet,
-    },
-};
 
 use crate::{
-    batch::data::{BatchData, ip::FullIpAddr, protocol::Protocol},
+    batch::data::{
+        BatchData,
+        eth::ETH_HDR_LEN,
+        ip::{FILL_FLAG_IP_DST, FILL_FLAG_IP_ID, FILL_FLAG_IP_SRC, FILL_FLAG_IP_TTL, IP_HDR_LEN},
+        protocol::{Protocol, ProtocolExt},
+    },
     context::Context,
     logger::level::LogLevel,
-    util::{
-        get_cpu_rdtsc, get_gw_mac, get_mac_addr_from_str, get_src_ip_from_ifname,
-        net::{NetIpType, get_src_mac_addr},
-        rand_num,
-        sys::get_cpu_count,
-    },
+    tech::Tech,
+    util::{get_cpu_count, get_cpu_rdtsc, get_ifname_from_src_ip},
 };
-
-use rand::{SeedableRng, seq::SliceRandom};
-
-use rand::rngs::StdRng;
 
 const MAX_BUFFER_SZ: usize = 2048;
 
-const DEF_IP_TTL: u8 = 64;
-const DEF_IP_TOS: u8 = 0x08; // Default to "low delay" as per RFC 791.
+const OFF_START_IP_HDR: usize = ETH_HDR_LEN;
+const OFF_START_PROTO_HDR: usize = ETH_HDR_LEN + IP_HDR_LEN;
+
+struct RlData {
+    pps: u64,
+    bps: u64,
+    next_update: Instant,
+}
 
 impl BatchData {
     pub fn exec(&self, ctx: Context, id: u16) -> Result<()> {
@@ -44,18 +42,29 @@ impl BatchData {
         // Prepare block handles.
         let mut block_hdl = Vec::new();
 
+        // Create rate limit context.
+        // We need to do it outside of the threads for shared state.
+        let rl_state = Arc::new(Mutex::new(RlData {
+            pps: 0,
+            bps: 0,
+            next_update: Instant::now(),
+        }));
+
         // Spawn threads.
         for i in 0..thread_cnt {
             let ctx = ctx.clone();
             let data = self.clone();
 
-            let cfg = &ctx.cfg;
+            let rl_state = rl_state.clone();
 
             let hdl = thread::spawn(move || {
                 // We'll want to clone immutable data here so that we aren't waiting for locks from shared threads (hurts performance).
                 let tech = ctx.tech.blocking_read().clone();
                 let logger = ctx.logger.blocking_read().clone();
-                let batch = self.clone();
+
+                let batch = ctx.batch.blocking_read().clone();
+
+                let data = data.clone();
 
                 logger
                     .log_msg(
@@ -68,63 +77,58 @@ impl BatchData {
                     .ok();
 
                 // We need to retrieve the interface name.
-                let if_name = if let Some(name) = tech.if_name {
+                let if_name = if let Some(name) = batch.ovr_opts.and_then(|o| o.iface) {
                     name
                 } else {
                     // We can use our util function to get the interface name from the source IP.
-                    let src_ip = batch
+                    let src_ip = match batch
                         .batches
                         .first()
                         .and_then(|b| b.opt_ip.src.as_ref())
                         .and_then(|src_vec| src_vec.first())
-                        .ok_or_else(|| anyhow!("No source IP found to derive interface name"))?;
+                    {
+                        Some(ip) => ip,
+                        None => {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!(
+                                        "No source IP found to derive interface name for batch {}",
+                                        id
+                                    ),
+                                )
+                                .ok();
 
-                    get_ifname_from_src_ip(src_ip)
-                        .ok_or_else(|| anyhow!("Could not find interface for IP {}", src_ip))?
+                            return;
+                        }
+                    };
+
+                    match get_ifname_from_src_ip(src_ip) {
+                        Ok(name) => name,
+                        Err(e) => {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!(
+                                        "Could not find interface from source IP '{}': {}",
+                                        src_ip, e
+                                    ),
+                                )
+                                .ok();
+
+                            return;
+                        }
+                    }
                 };
 
                 // Retrieve protocol from batch config.
-                let proto: Protocol = Protocol::from(
-                    batch
-                        .opt_proto
-                        .clone()
-                        .ok_or_else(|| anyhow!("No protocol specified in batch"))?,
-                )?;
+                let proto: Protocol = Protocol::from(data.protocol.clone());
 
-                // Determine MAC addresses now.
-                let src_mac = match batch.opt_eth.unwrap_or_default().get_src_mac() {
-                    Ok(mac) => mac,
-                    Err(e) => {
-                        logger
-                            .log_msg(
-                                LogLevel::Error,
-                                &format!("Failed to get source MAC address: {}", e),
-                            )
-                            .ok();
+                let opt_ip = &data.opt_ip;
 
-                        return;
-                    }
-                };
-
-                // Retrieve destimation MAC address using our util func.
-                // If `opt_eth` is `None`, MAC addresses will be None meaning it'll try retrieving from the default gateway.
-                let dst_mac = match batch.opt_eth.unwrap_or_default().get_dst_mac() {
-                    Ok(mac) => mac,
-                    Err(e) => {
-                        logger
-                            .log_msg(
-                                LogLevel::Error,
-                                &format!("Failed to get destination MAC address: {}", e),
-                            )
-                            .ok();
-
-                        return;
-                    }
-                };
-
-                // Determine source and destination IP address(es) now.
-                // We'll also want to determine if the IPs are static to save resources later.
-                let src_ips = match batch.opt_ip.get_src_ips(Some(&if_name)) {
+                // Retrieve a full list of source and destination IP addresses we'll be using.
+                // We format these into the FullIpAddr structure.
+                let src_ips = match data.opt_ip.get_src_ips(Some(&if_name)) {
                     Ok(ips) => ips,
                     Err(e) => {
                         logger
@@ -138,15 +142,7 @@ impl BatchData {
                     }
                 };
 
-                let static_src_ip = if src_ips.len() == 1 {
-                    let net = src_ips.first().unwrap();
-
-                    if net.cidr == 32 { Some(net.ip) } else { None }
-                } else {
-                    None
-                };
-
-                let dst_ips = match self.opt_ip.get_dst_ips() {
+                let dst_ips = match data.opt_ip.get_dst_ips() {
                     Ok(ips) => ips,
                     Err(e) => {
                         logger
@@ -160,119 +156,445 @@ impl BatchData {
                     }
                 };
 
-                let static_dst_ip = if dst_ips.len() == 1 {
-                    let net = dst_ips.first().unwrap();
-
-                    if net.cidr == 32 { Some(net.ip) } else { None }
-                } else {
-                    None
-                };
-
-                // We need to determine the payload.
-
                 // Generate seed using CPU timestamp counter for better randomness across threads.
-                let mut rng = StdRng::seed_from_u64(get_cpu_rdtsc() as u64);
+                let mut seed = get_cpu_rdtsc() as u64;
 
                 // Construct the packet buffer now.
                 let mut buff: [u8; MAX_BUFFER_SZ] = [0; MAX_BUFFER_SZ];
 
-                // Create ethernet header and fill out static ethernet fields now.
-                let mut eth = MutableEthernetPacket::new(&mut buff)
-                    .ok_or_else(|| anyhow!("Failed to create Ethernet packet from buffer"))?;
+                // Get protocol length.
+                let proto_len = proto.get_hdr_len() as u16;
 
-                // Set IPv4 ether type.
-                eth.set_ethertype(EtherTypes::Ipv4);
+                let proto_hdr_end = OFF_START_PROTO_HDR + proto_len as usize;
 
-                // Set source and destination MAC addresses.
-                eth.set_source(src_mac.into());
-                eth.set_destination(dst_mac.into());
+                // Generate payload now so we know what the length is.
+                let (pl_len, static_pl) = match data.payload {
+                    Some(ref opt_pl) => match opt_pl.gen_payload(
+                        &mut buff[OFF_START_PROTO_HDR + proto_len as usize..],
+                        &mut seed,
+                    ) {
+                        Ok(Some((len, is_static))) => (len, is_static),
+                        Ok(None) => (0, false),
+                        Err(e) => {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!("Failed to generate payload: {}", e),
+                                )
+                                .ok();
 
-                // Construct the IPv4 header now and fill it out.
-                let mut iph = MutableIpv4Packet::new(eth.payload_mut())
-                    .ok_or_else(|| anyhow!("Failed to create IPv4 packet from Ethernet buffer"))?;
-
-                let opt_ip = &batch.opt_ip;
-
-                iph.set_version(4);
-                iph.set_header_length(5 * 4);
-
-                // Set TTL based off of batch config.
-                let ip_static_ttl =
-                    batch.opt_ip.ttl_min.unwrap_or(0) == batch.opt_ip.ttl_max.unwrap_or(1);
-
-                iph.set_ttl(rand_num(
-                    opt_ip.ttl_min.unwrap_or(DEF_IP_TTL) as u16,
-                    opt_ip.ttl_max.unwrap_or(DEF_IP_TTL) as u16,
-                ) as u8);
-
-                // Set protocol field based on batch config.
-                iph.set_next_level_protocol(match proto {
-                    Tcp(_) => IpNextHeaderProtocols::Tcp,
-                    Udp(_) => IpNextHeaderProtocols::Udp,
-                    Icmp(_) => IpNextHeaderProtocols::Icmp,
-                });
-
-                // We don't support fragmentation.
-                iph.set_fragment_offset(0);
-
-                // Set ID field based on random/static configuration.
-                iph.set_identification(rand_num(
-                    opt_ip.id_min.unwrap_or(0),
-                    opt_ip.id_max.unwrap_or(u16::MAX),
-                ));
-
-                iph.set_tos(opt_ip.tos.unwrap_or(DEF_IP_TOS));
-
-                // Now set source IP address(es) now.
-                iph.set_source(match static_src_ip {
-                    Some(ip) => ip.into(),
-                    None => {
-                        let rand_ip: FullIpAddr = src_ips
-                            .choose(&mut rng)
-                            .ok_or_else(|| anyhow!("Source IP list is empty"))?;
-
-                        if rand_ip.cidr == 32 {
-                            rand_ip.ip.into()
-                        } else {
-                            // Generate a random IP within the CIDR range.
-                            get_rand_ip_from_str(&rand_ip.to_string(), rng.next_u32())?
-                                .parse::<IpAddr>()
-                                .map_err(|e| anyhow!("Failed to parse generated source IP: {}", e))?
-                                .into()
+                            return;
                         }
+                    },
+                    None => (0, false),
+                };
+
+                // Determine full packet size now so we can use it as a boundry for filling header fields and such.
+                let mut pkt_len =
+                    ETH_HDR_LEN as u16 + IP_HDR_LEN as u16 + proto.get_hdr_len() as u16 + pl_len;
+
+                // Fill out ethernet header.
+                // We use fill_init rom our eth options which is a helper func.
+                match data
+                    .opt_eth
+                    .unwrap_or_default()
+                    .fill_init(&mut buff[..ETH_HDR_LEN as usize])
+                {
+                    Ok(_) => (),
+                    Err(e) => {
+                        logger
+                            .log_msg(
+                                LogLevel::Error,
+                                &format!("Failed to fill Ethernet header: {}", e),
+                            )
+                            .ok();
+
+                        return;
                     }
-                });
+                }
 
-                // Now set destination IP address(es) now.
-                iph.set_destination(match static_dst_ip {
-                    Some(ip) => ip.into(),
-                    None => {
-                        let rand_ip: FullIpAddr = dst_ips
-                            .choose(&mut rng)
-                            .ok_or_else(|| anyhow!("Destination IP list is empty"))?;
+                let (static_ip_src, static_ip_dst, static_ip_id, static_ip_ttl) = match data
+                    .opt_ip
+                    .fill_init(
+                        &mut buff[OFF_START_IP_HDR..pkt_len as usize],
+                        &mut seed,
+                        &proto,
+                        &src_ips,
+                        &dst_ips,
+                    ) {
+                    Ok((src, dst, id, ttl)) => (src, dst, id, ttl),
+                    Err(e) => {
+                        logger
+                            .log_msg(LogLevel::Error, &format!("Failed to fill IP header: {}", e))
+                            .ok();
 
-                        if rand_ip.cidr == 32 {
-                            rand_ip.ip.into()
-                        } else {
-                            // Generate a random IP within the CIDR range.
-                            get_rand_ip_from_str(&rand_ip.to_string(), rng.next_u32())?
-                                .parse::<IpAddr>()
-                                .map_err(|e| {
-                                    anyhow!("Failed to parse generated destination IP: {}", e)
-                                })?
-                                .into()
-                        }
-                    }
-                });
-
-                // Before the loop, let's retrieve the socket or whatever we need.
-                let mut sock = {
-                    match tech {
-                        AfXdp(t) => {
-                            t.sockets.get(i);
-                        }
+                        return;
                     }
                 };
+
+                // Now fill transport protocol header fields.
+                let (static_proto_src, static_proto_dst) = match proto
+                    .fill_init(&mut buff[OFF_START_PROTO_HDR..pkt_len as usize], &mut seed)
+                {
+                    Ok((src, dst)) => (src, dst),
+                    Err(e) => {
+                        logger
+                            .log_msg(
+                                LogLevel::Error,
+                                &format!("Failed to fill protocol header: {}", e),
+                            )
+                            .ok();
+
+                        return;
+                    }
+                };
+
+                // Now determine flags for refills.
+                let refill_ip_flags = {
+                    let mut flags = 0;
+
+                    if !static_ip_src {
+                        flags |= FILL_FLAG_IP_SRC;
+                    }
+
+                    if !static_ip_dst {
+                        flags |= FILL_FLAG_IP_DST;
+                    }
+
+                    if !static_ip_id {
+                        flags |= FILL_FLAG_IP_ID;
+                    }
+
+                    if !static_ip_ttl {
+                        flags |= FILL_FLAG_IP_TTL;
+                    }
+
+                    flags
+                };
+
+                let refill_proto_flags = {
+                    let mut flags = 0;
+
+                    if !static_proto_src {
+                        flags |= proto
+                            .get_src_port()
+                            .is_some()
+                            .then(|| FILL_FLAG_IP_SRC)
+                            .unwrap_or(0);
+                    }
+
+                    if !static_proto_dst {
+                        flags |= proto
+                            .get_dst_port()
+                            .is_some()
+                            .then(|| FILL_FLAG_IP_DST)
+                            .unwrap_or(0);
+                    }
+
+                    flags
+                };
+
+                // Calculate checksums now.
+                // We start with the transport layer.
+                match proto.gen_checksum(&mut buff[IP_HDR_LEN..]) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        logger
+                            .log_msg(
+                                LogLevel::Error,
+                                &format!("Failed to generate protocol checksum: {}", e),
+                            )
+                            .ok();
+
+                        return;
+                    }
+                }
+
+                match opt_ip.gen_checksum(&mut buff[OFF_START_IP_HDR..]) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        logger
+                            .log_msg(
+                                LogLevel::Error,
+                                &format!("Failed to generate IP checksum: {}", e),
+                            )
+                            .ok();
+
+                        return;
+                    }
+                }
+
+                // If we have a static payload + no refill flags, we don't need to recalculate checksums later on.
+                let csum_not_needed = static_pl && refill_ip_flags == 0 && refill_proto_flags == 0;
+
+                // Before the loop, let's retrieve the socket or whatever we need.
+                let sock = {
+                    match &tech {
+                        Tech::AfXdp(t) => match t.sockets.get(&i) {
+                            Some(m) => m,
+                            None => {
+                                logger
+                                    .log_msg(
+                                        LogLevel::Error,
+                                        &format!(
+                                            "No socket found for thread ID {} in AF_XDP tech",
+                                            i
+                                        ),
+                                    )
+                                    .ok();
+
+                                return;
+                            }
+                        },
+                    }
+                };
+
+                let start_time = Instant::now();
+
+                let to_end_time = {
+                    if let Some(dur) = data.duration {
+                        Some(Duration::from_secs(dur))
+                    } else {
+                        None
+                    }
+                };
+
+                // Counters for total packets and bytes sent by this thread.
+                let mut cur_pkts = 0;
+                let mut cur_byts = 0;
+
+                // Determine limits.
+                // Determine the max packet and bytes for this thread if applicable.
+                let max_pkt_cnt = {
+                    if let Some(max_pkt) = data.max_pkt {
+                        Some((max_pkt / thread_cnt as u64).max(1))
+                    } else {
+                        None
+                    }
+                };
+
+                let max_byt_cnt = {
+                    if let Some(max_byt) = data.max_byt {
+                        Some((max_byt / thread_cnt as u64).max(1))
+                    } else {
+                        None
+                    }
+                };
+
+                let pps = if let Some(pps) = data.pps {
+                    Some(pps)
+                } else {
+                    None
+                };
+
+                let bps = if let Some(bps) = data.bps {
+                    Some(bps)
+                } else {
+                    None
+                };
+
+                loop {
+                    // Attempt to send packet immediately.
+                    // First run should have all fields set regardless.
+                    match sock
+                        .lock()
+                        .unwrap()
+                        .send_repeated(&buff[..pkt_len as usize])
+                    {
+                        Ok(_) => (),
+                        Err(e) => {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!("[B{}][T{}] Failed to send packet: {}", id, i, e),
+                                )
+                                .ok();
+
+                            // Don't return here - we want to keep trying to send packets even if some sends fail.
+                        }
+                    }
+
+                    // Check if we've reached the configured duration.
+                    if let Some(max_dur) = to_end_time {
+                        if Instant::now().duration_since(start_time) >= max_dur {
+                            logger
+                            .log_msg(
+                                LogLevel::Info,
+                                &format!(
+                                    "[B{}][T{}] Finished execution after reaching max duration of {:?}",
+                                    id, i, max_dur
+                                ),
+                            ).ok();
+
+                            break;
+                        }
+                    }
+
+                    // Check for max packets.
+                    if let Some(max_pk) = max_pkt_cnt {
+                        cur_pkts += 1;
+
+                        if cur_pkts >= max_pk {
+                            logger
+                                .log_msg(
+                                    LogLevel::Info,
+                                    &format!("[B{}][T{}] Finished execution after sending max packets of {}", i, id, max_pk),
+                                )
+                                .ok();
+
+                            break;
+                        }
+                    }
+
+                    // Check for max bytes.
+                    if let Some(max_by) = max_byt_cnt {
+                        cur_byts += pkt_len as u64;
+
+                        if cur_byts >= max_by {
+                            logger
+                                .log_msg(
+                                    LogLevel::Info,
+                                    &format!("[B{}][T{}] Finished execution after sending max bytes of {}", i, id, max_by),
+                                )
+                                .ok();
+
+                            break;
+                        }
+                    }
+
+                    // Check for per-second limits.
+                    if pps.is_some() || bps.is_some() {
+                        let mut rl = rl_state.lock().unwrap();
+
+                        let now = Instant::now();
+
+                        if now >= rl.next_update {
+                            // Reset counters and determine next update time.
+                            rl.pps = 0;
+                            rl.bps = 0;
+                            rl.next_update = now + Duration::from_secs(1);
+                        } else {
+                            // Check if sending the packet would exceed the limits.
+                            if let Some(pps_limit) = pps {
+                                if rl.pps >= pps_limit {
+                                    let sleep_dur = rl.next_update.duration_since(now);
+
+                                    thread::sleep(sleep_dur);
+
+                                    continue;
+                                }
+                            }
+
+                            if let Some(bps_limit) = bps {
+                                if rl.bps + pkt_len as u64 > bps_limit {
+                                    let sleep_dur = rl.next_update.duration_since(now);
+
+                                    thread::sleep(sleep_dur);
+
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // If we reach here, it means we can send the packet without exceeding limits. Update counters accordingly.
+                        rl.pps += 1;
+                        rl.bps += pkt_len as u64;
+                    }
+
+                    // Check if we need to regenerate the payload.
+                    if static_pl {
+                        match data.payload {
+                            Some(ref opt_pl) => {
+                                if let Err(e) = opt_pl.gen_payload(
+                                    &mut buff[(ETH_HDR_LEN + IP_HDR_LEN)..pkt_len as usize],
+                                    &mut seed,
+                                ) {
+                                    logger
+                                        .log_msg(
+                                            LogLevel::Error,
+                                            &format!("Failed to regenerate static payload: {}", e),
+                                        )
+                                        .ok();
+
+                                    continue;
+                                }
+                            }
+                            None => (),
+                        }
+
+                        // We must recalculate the packet length now.
+                        pkt_len = ETH_HDR_LEN as u16 + IP_HDR_LEN as u16 + pl_len as u16;
+                    }
+
+                    // Check if we need to refill the IP header at all.
+                    if refill_ip_flags != 0 {
+                        if let Err(e) = opt_ip.fill(
+                            &mut buff[ETH_HDR_LEN..pkt_len as usize],
+                            refill_ip_flags,
+                            &mut seed,
+                            &src_ips,
+                            &dst_ips,
+                        ) {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!("Failed to refill IP header: {}", e),
+                                )
+                                .ok();
+
+                            continue;
+                        }
+                    }
+
+                    // Check if we need to refill the protocol header at all.
+                    if refill_proto_flags != 0 {
+                        if let Err(e) = proto.fill(
+                            &mut buff[(ETH_HDR_LEN + IP_HDR_LEN)..pkt_len as usize],
+                            refill_proto_flags,
+                            &mut seed,
+                        ) {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!("Failed to refill protocol header: {}", e),
+                                )
+                                .ok();
+
+                            continue;
+                        }
+                    }
+
+                    // Recalculate checksums if needed.
+                    if !csum_not_needed {
+                        // We start with the transport layer.
+                        if let Err(e) = proto.gen_checksum(&mut buff[IP_HDR_LEN..]) {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!("Failed to regenerate protocol checksum: {}", e),
+                                )
+                                .ok();
+
+                            continue;
+                        }
+
+                        if let Err(e) = opt_ip.gen_checksum(&mut buff[OFF_START_IP_HDR..]) {
+                            logger
+                                .log_msg(
+                                    LogLevel::Error,
+                                    &format!("Failed to regenerate IP checksum: {}", e),
+                                )
+                                .ok();
+
+                            continue;
+                        }
+                    }
+
+                    // Check if we need to sleep between sends based on batch config.
+                    if let Some(interval) = data.send_interval {
+                        thread::sleep(Duration::from_micros(interval));
+                    }
+                }
             });
 
             if self.wait_for_finish {

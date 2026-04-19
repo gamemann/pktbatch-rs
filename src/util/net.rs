@@ -7,6 +7,17 @@ use anyhow::{Result, anyhow};
 
 use std::fs;
 
+use crate::util::rand_num;
+
+pub struct NetIpMulti {
+    pub net: String,
+    pub cidr: u8,
+}
+pub enum NetIpType {
+    Single(String),
+    Multi(NetIpMulti),
+}
+
 /// Chooses a random IP from a specific CIDR range (decimal format).
 ///
 /// # Arguments
@@ -16,7 +27,7 @@ use std::fs;
 ///
 /// # Returns
 /// A random IP address as a string within the specified CIDR range.
-pub fn get_rand_ip_from_cidr(net: IpAddr, cidr: u8, seed: u32) -> Result<IpAddr> {
+pub fn get_rand_ip_from_cidr(net: IpAddr, cidr: u8, seed: &mut u64) -> Result<IpAddr> {
     let net_u32 = match net {
         IpAddr::V4(v4) => u32::from(v4),
         IpAddr::V6(_) => return Err(anyhow!("IPv6 not supported at this time")),
@@ -30,13 +41,13 @@ pub fn get_rand_ip_from_cidr(net: IpAddr, cidr: u8, seed: u32) -> Result<IpAddr>
         (1u32 << (32 - cidr)).wrapping_sub(1)
     };
 
-    // Cheap LCG that mimics the behaviour of a seeded rand_r call.
-    let rand_num = lcg_rand(seed);
+    // Generate random number using our fast rand function.
+    let rand_num = rand_num(seed, 0, mask as u64) as u32;
 
     // Combine the network prefix with the random host part.
     let rand_ip_u32 = (net_u32 & !mask) | (mask & rand_num);
 
-    Ok(IpAddr::from(rand_ip_u32))
+    Ok(IpAddr::V4(Ipv4Addr::from(rand_ip_u32)))
 }
 
 /// Chooses a random IP from a specific CIDR range.
@@ -47,7 +58,7 @@ pub fn get_rand_ip_from_cidr(net: IpAddr, cidr: u8, seed: u32) -> Result<IpAddr>
 ///
 /// # Returns
 /// A random IP address as a string within the specified CIDR range.
-pub fn get_rand_ip_from_str(range: &str, seed: u32) -> Result<String> {
+pub fn get_rand_ip_from_str(range: &str, seed: &mut u64) -> Result<String> {
     // Split net IP/CIDR from the range string.
     let (s_ip, cidr_str) = range
         .split_once('/')
@@ -66,18 +77,6 @@ pub fn get_rand_ip_from_str(range: &str, seed: u32) -> Result<String> {
     };
 
     get_rand_ip_from_cidr(net_ip, cidr, seed).map(|ip| ip.to_string())
-}
-
-/// Internal function that acts as a minimal LCG random number generator that mirrors the single-step
-/// output of a typical `rand_r` implementation (glibc / POSIX).
-///
-/// glibc rand_r does:  next = next * 1103515245 + 12345
-/// and returns        (next >> 16) & 0x7FFF  (a 15-bit value)
-///
-/// We return the full 32-bit scrambled seed so the host bits are filled
-/// across the whole mask (important for prefix lengths smaller than 17).
-fn lcg_rand(seed: u32) -> u32 {
-    seed.wrapping_mul(1_103_515_245).wrapping_add(12_345)
 }
 
 /// Retrieves the source MAC address of a network interface.
@@ -230,15 +229,6 @@ pub fn get_mac_addr_from_str(mac_str: &str) -> Result<[u8; 6]> {
 
     <[u8; 6]>::try_from(bytes.as_slice())
         .map_err(|_| anyhow!("expected 6 MAC octets, received {}", bytes.len()))
-}
-
-pub struct NetIpMulti {
-    pub net: String,
-    pub cidr: u8,
-}
-pub enum NetIpType {
-    Single(String),
-    Multi(NetIpMulti),
 }
 
 /// Checks if the given string contains a valid IP address. If the string is a network IP with a CIDR, it will return a structure containing the net IP and CIDR. Otherwise, it will return the string as a single IP.

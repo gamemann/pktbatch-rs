@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
     // Create the tech.
     logger.log_msg(LogLevel::Trace, "Initializing tech...").ok();
 
-    let tech: TechBase = cfg.tech.try_into().map_err(|e| {
+    let tech: TechBase = cfg.tech.clone().try_into().map_err(|e| {
         logger
             .log_msg(
                 LogLevel::Fatal,
@@ -94,25 +94,41 @@ async fn main() -> Result<()> {
 
     let ctx = ContextData::new(cfg, logger, cli, tech, batch);
 
-    // Shadow vars.
-    let cfg = &ctx.cfg;
-    let logger = &ctx.logger;
-    let tech = &ctx.tech;
-    let batch = &ctx.batch;
+    // Start batches.
+    let batch_hdl = tokio::spawn({
+        let ctx = ctx.clone();
 
-    batch
-        .read()
-        .await
-        .start_batches(ctx.clone())
-        .await
-        .map_err(|e| {
-            logger
-                .blocking_read()
-                .log_msg(LogLevel::Fatal, &format!("Failed to start batches: {}", e))
+        async move {
+            ctx.batch
+                .read()
+                .await
+                .clone()
+                .start_batches(ctx.clone())
+                .await
+                .map_err(|e| {
+                    ctx.logger
+                        .blocking_read()
+                        .log_msg(LogLevel::Fatal, &format!("Failed to start batches: {}", e))
+                        .ok();
+
+                    anyhow!("Failed to start batches: {}", e)
+                })
+        }
+    });
+
+    // Setup signal.
+    tokio::select! {
+        res = batch_hdl => {
+            res??;
+        }
+        _ = tokio::signal::ctrl_c() => {
+            ctx.logger
+                .read()
+                .await
+                .log_msg(LogLevel::Info, "Received Ctrl+C signal. Shutting down...")
                 .ok();
-
-            anyhow!("Failed to start batches: {}", e)
-        })?;
+        }
+    }
 
     Ok(())
 }

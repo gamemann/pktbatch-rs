@@ -21,6 +21,9 @@ pub struct BatchData {
     pub max_pkt: Option<u64>,
     pub max_byt: Option<u64>,
 
+    pub pps: Option<u64>,
+    pub bps: Option<u64>,
+
     pub duration: Option<u64>,
     pub send_interval: Option<u64>,
 
@@ -42,6 +45,8 @@ impl Default for BatchData {
             wait_for_finish: false,
             max_pkt: None,
             max_byt: None,
+            pps: None,
+            bps: None,
             duration: None,
             send_interval: None,
             thread_cnt: Some(1),

@@ -9,6 +9,7 @@ pub struct TechAfXdpOpts {
     pub shared_umem: bool,
     pub batch_size: u32,
     pub zero_copy: bool,
+    pub sock_cnt: Option<u16>,
 }
 
 impl Default for TechAfXdpOpts {
@@ -20,6 +21,7 @@ impl Default for TechAfXdpOpts {
             if_name: None,
             batch_size: 64,
             zero_copy: false, // true is best for performance, but it requires a supported driver and kernel version, so we default to false for better compatibility
+            sock_cnt: None,   // Auto
         }
     }
 }

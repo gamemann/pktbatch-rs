@@ -1,3 +1,5 @@
+use std::{collections::HashMap, sync::Arc};
+
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -48,7 +50,6 @@ impl TechExt for TechBase {
     fn pkt_send(&mut self, ctx: Context, pkt: &[u8], data: Self::TechData) -> Result<()> {
         match (self, data) {
             (TechBase::AfXdp(t), TechData::AfXdp(d)) => t.pkt_send(ctx, pkt, d),
-            _ => anyhow::bail!("mismatched tech variant and data"),
         }
     }
 }
@@ -63,6 +64,7 @@ impl From<TechCfg> for TechBase {
                     shared_umem: opts.shared_umem,
                     batch_size: opts.batch_size,
                     zero_copy: opts.zero_copy,
+                    sock_cnt: opts.sock_cnt,
                 },
                 sockets: Arc::new(HashMap::new()),
             }),

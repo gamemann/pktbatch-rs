@@ -1,5 +1,13 @@
+use std::net::IpAddr;
+
+use anyhow::{Result, anyhow};
+use pnet::packet::icmp::{IcmpCode, IcmpType, MutableIcmpPacket, checksum};
+
 use crate::{
-    batch::data::protocol::ProtocolExt,
+    batch::data::{
+        ip::IP_HDR_LEN,
+        protocol::{Protocol, ProtocolExt},
+    },
     config::batch::data::protocol::icmp::IcmpOpts as IcmpOptsCfg,
 };
 
@@ -11,15 +19,9 @@ pub struct IcmpOpts {
     pub icmp_code: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProtocolIcmp {
-    pub icmp_type: u8,
-    pub icmp_code: u8,
-}
-
-impl Default for ProtocolIcmp {
+impl Default for IcmpOpts {
     fn default() -> Self {
-        ProtocolIcmp {
+        IcmpOpts {
             icmp_type: 8, // Echo Request
             icmp_code: 0,
         }
@@ -35,26 +37,85 @@ impl From<IcmpOptsCfg> for IcmpOpts {
     }
 }
 
-impl ProtocolExt for ProtocolIcmp {
-    type Opts = IcmpOpts;
-
-    fn new(_proto: &str, opts: Self::Opts) -> Self {
-        ProtocolIcmp::from(opts)
+impl From<IcmpOpts> for Protocol {
+    fn from(opts: IcmpOpts) -> Self {
+        Protocol::Icmp(opts)
     }
+}
 
+impl ProtocolExt for IcmpOpts {
+    type Opts = IcmpOpts;
+    type State = (); // Not used for ICMP
+
+    #[inline(always)]
     fn get_hdr_len(&self) -> usize {
         LEN_ICMP_HDR
     }
 
+    #[inline(always)]
     fn get_proto_num(&self) -> u8 {
         1
     }
 
+    #[inline(always)]
     fn get_src_port(&self) -> Option<u16> {
         None
     }
 
+    #[inline(always)]
+    fn gen_src_port(&self, _buff: &mut [u8], _seed: &mut u64) -> Result<(Option<u16>, bool)> {
+        Ok((None, false))
+    }
+
+    #[inline(always)]
     fn get_dst_port(&self) -> Option<u16> {
         None
+    }
+
+    #[inline(always)]
+    fn gen_dst_port(&self, _buff: &mut [u8], _seed: &mut u64) -> Result<(Option<u16>, bool)> {
+        Ok((None, false))
+    }
+
+    #[inline(always)]
+    fn gen_checksum(&self, buff: &mut [u8]) -> Result<()> {
+        let mut icmph = match MutableIcmpPacket::new(buff[IP_HDR_LEN..].as_mut()) {
+            Some(p) => p,
+            None => {
+                return Err(anyhow!(
+                    "Failed to create mutable ICMP packet for checksum calculation"
+                ));
+            }
+        };
+
+        icmph.set_checksum(
+            checksum(&icmph.to_immutable())
+                .try_into()
+                .map_err(|e| anyhow!("Failed to convert checksum to u16: {}", e))?,
+        );
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn fill_init(&self, buff: &mut [u8], _seed: &mut u64) -> Result<(bool, bool)> {
+        let mut icmph = match MutableIcmpPacket::new(buff) {
+            Some(p) => p,
+            None => {
+                return Err(anyhow!(
+                    "Failed to create mutable ICMP packet for filling fields"
+                ));
+            }
+        };
+
+        icmph.set_icmp_type(IcmpType(self.icmp_type));
+        icmph.set_icmp_code(IcmpCode(self.icmp_code));
+
+        Ok((true, true))
+    }
+
+    #[inline(always)]
+    fn fill(&self, _buff: &mut [u8], _flags: u32, _seed: &mut u64) -> Result<()> {
+        Ok(())
     }
 }
