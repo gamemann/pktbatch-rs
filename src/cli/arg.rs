@@ -75,6 +75,13 @@ pub struct Args {
     pub ovr_thread_cnt: Option<u32>,
 
     #[clap(
+        short = 'I',
+        long = "interval",
+        help = "Override first batch's send interval (microseconds)."
+    )]
+    pub ovr_send_interval: Option<u64>,
+
+    #[clap(
         short = 't',
         long = "duration",
         help = "Override first batch's duration."
@@ -99,8 +106,8 @@ pub struct Args {
     pub ovr_bps: Option<u64>,
 
     // Additional overrides (normally not associated with short options)
-    #[clap(long = "block", help = "Override first batch's block flag.")]
-    pub ovr_block: Option<bool>,
+    #[clap(long = "waot", help = "Override first batch's wait for finish flag.")]
+    pub ovr_wait: Option<bool>,
 
     #[clap(
         long = "max-pkt",
@@ -170,4 +177,10 @@ pub struct Args {
 
     #[clap(long = "file", help = "Override first batch's file flag.")]
     pub ovr_is_file: Option<bool>,
+
+    #[clap(
+        long = "string",
+        help = "Override first batch's payload's is string flag."
+    )]
+    pub ovr_is_string: Option<bool>,
 }

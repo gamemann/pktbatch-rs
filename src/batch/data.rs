@@ -10,7 +10,7 @@ use crate::{
     util::sys::get_cpu_count,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BatchData {
     pub id: u16,
     pub name: Option<String>,
@@ -36,9 +36,6 @@ pub struct BatchData {
     pub opt_ip: IpOpts,
 
     pub payload: Option<Payload>,
-
-    pub state_static_pkt: Option<Vec<u8>>,
-    pub state_static_payload: Option<Vec<u8>>,
 }
 
 impl BatchData {
@@ -75,8 +72,6 @@ impl BatchData {
             opt_ip,
             protocol,
             payload,
-            state_static_pkt: None,
-            state_static_payload: None,
         }
     }
 }
@@ -104,5 +99,27 @@ impl From<BatchDataCfg> for BatchData {
             cfg.opt_protocol.into(),
             cfg.opt_payload.try_into().ok(),
         )
+    }
+}
+
+impl Default for BatchData {
+    fn default() -> Self {
+        BatchData {
+            id: 0,
+            name: None,
+            iface: None,
+            wait_for_finish: true,
+            max_pkt: None,
+            max_byt: None,
+            pps: None,
+            bps: None,
+            duration: Some(20),
+            send_interval: Some(1000000), // 1 second in microseconds
+            thread_cnt: 1,
+            opt_eth: None,
+            opt_ip: Default::default(),
+            protocol: Protocol::Tcp(Default::default()),
+            payload: None,
+        }
     }
 }

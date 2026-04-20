@@ -1,3 +1,5 @@
+use std::sync::{Arc, atomic::AtomicBool};
+
 use anyhow::{Result, anyhow};
 
 use crate::{
@@ -26,18 +28,20 @@ impl BatchBase {
         }
     }
 
-    pub async fn start_batches(&mut self, ctx: Context) -> Result<()> {
+    pub async fn start_batches(&mut self, ctx: Context, running: Arc<AtomicBool>) -> Result<()> {
         let logger = &ctx.logger;
 
         for (i, batch) in self.batches.iter_mut().enumerate() {
-            batch.exec(ctx.clone(), i as u16).map_err(|e| {
-                logger
-                    .blocking_read()
-                    .log_msg(LogLevel::Error, &format!("Batch execution failed: {}", e))
-                    .ok();
+            batch
+                .exec(ctx.clone(), i as u16, running.clone())
+                .map_err(|e| {
+                    logger
+                        .blocking_read()
+                        .log_msg(LogLevel::Error, &format!("Batch execution failed: {}", e))
+                        .ok();
 
-                anyhow!("Batch execution failed: {}", e)
-            })?;
+                    anyhow!("Batch execution failed: {}", e)
+                })?;
         }
         Ok(())
     }

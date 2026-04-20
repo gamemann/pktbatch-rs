@@ -23,6 +23,8 @@ pub const FILL_FLAG_UDP_LEN: u32 = 1 << 2;
 pub struct UdpOpts {
     pub src_port: Option<u16>,
     pub dst_port: Option<u16>,
+
+    pub do_csum: bool,
 }
 
 impl From<UdpOptsCfg> for UdpOpts {
@@ -30,6 +32,7 @@ impl From<UdpOptsCfg> for UdpOpts {
         Self {
             src_port: cfg.src_port,
             dst_port: cfg.dst_port,
+            do_csum: cfg.do_csum,
         }
     }
 }

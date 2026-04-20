@@ -5,6 +5,9 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+use pnet::packet::{ethernet::MutableEthernetPacket, ipv4::MutableIpv4Packet};
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     batch::data::{
@@ -31,7 +34,7 @@ struct RlData {
 }
 
 impl BatchData {
-    pub fn exec(&self, ctx: Context, id: u16) -> Result<()> {
+    pub fn exec(&self, ctx: Context, id: u16, running: Arc<AtomicBool>) -> Result<()> {
         // Retrieve the number of threads we should create.
         let thread_cnt = if self.thread_cnt > 0 {
             self.thread_cnt
@@ -54,6 +57,7 @@ impl BatchData {
         for i in 0..thread_cnt {
             let ctx = ctx.clone();
             let data = self.clone();
+            let running = running.clone();
 
             let rl_state = rl_state.clone();
 
@@ -198,7 +202,7 @@ impl BatchData {
                 match data
                     .opt_eth
                     .unwrap_or_default()
-                    .fill_init(&mut buff[..ETH_HDR_LEN as usize])
+                    .fill_init(&mut buff[..ETH_HDR_LEN as usize], Some(if_name.clone()))
                 {
                     Ok(_) => (),
                     Err(e) => {
@@ -394,6 +398,58 @@ impl BatchData {
                 };
 
                 loop {
+                    // Check if we need to stop execution (from main thread signal).
+                    if !running.load(Ordering::Relaxed) {
+                        break;
+                    }
+
+                    {
+                        logger
+                            .log_msg(
+                                LogLevel::Trace,
+                                &format!(
+                                    "[B{}][T{}] Sending packet of size {} bytes",
+                                    id, i, pkt_len
+                                ),
+                            )
+                            .ok();
+
+                        let eth = MutableEthernetPacket::new(&mut buff[..ETH_HDR_LEN as usize])
+                            .expect("Failed to create mutable Ethernet packet from buffer slice");
+
+                        logger
+                            .log_msg(
+                                LogLevel::Trace,
+                                &format!(
+                                    "[B{}][T{}] Eth Header - Src: {}, Dst: {}",
+                                    id,
+                                    i,
+                                    eth.get_source(),
+                                    eth.get_destination()
+                                ),
+                            )
+                            .ok();
+
+                        let iph =
+                            MutableIpv4Packet::new(&mut buff[OFF_START_IP_HDR..pkt_len as usize])
+                                .expect("Failed to create mutable IPv4 packet from buffer slice");
+
+                        logger
+                            .log_msg(
+                                LogLevel::Trace,
+                                &format!(
+                                    "[B{}][T{}] IP Header - Src: {}, Dst: {}, ID: {}, TTL: {}",
+                                    id,
+                                    i,
+                                    iph.get_source(),
+                                    iph.get_destination(),
+                                    iph.get_identification(),
+                                    iph.get_ttl()
+                                ),
+                            )
+                            .ok();
+                    }
+
                     // Attempt to send packet immediately.
                     // First run should have all fields set regardless.
                     match sock

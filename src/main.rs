@@ -7,16 +7,23 @@ mod util;
 
 mod context;
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 use anyhow::{Result, anyhow};
 
 use crate::{
-    batch::base::Batch,
+    batch::{base::Batch, data::BatchData},
     cli::base::Cli,
-    config::base::Config,
+    config::{base::Config, batch::ovr_opts::apply_first_batch_overrides},
     context::ContextData,
     logger::{base::Logger, level::LogLevel},
     tech::base::TechBase,
 };
+
+use crate::tech::ext::TechExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,7 +61,7 @@ async fn main() -> Result<()> {
         .log_msg(LogLevel::Trace, "Initializing batch...")
         .ok();
 
-    let batch = Batch::new(
+    let mut batch = Batch::new(
         cfg.batch.batches.iter().map(|b| b.clone().into()).collect(),
         cfg.batch
             .ovr_opts
@@ -73,6 +80,73 @@ async fn main() -> Result<()> {
             })?,
     );
 
+    // Check for first batch override.
+    {
+        let mut first_batch = {
+            if let Some(first_batch) = batch.batches.first() {
+                first_batch.clone()
+            } else {
+                BatchData::default()
+            }
+        };
+
+        match apply_first_batch_overrides(&mut first_batch, &cli.args) {
+            Ok(overriden) => {
+                if overriden {
+                    logger
+                        .log_msg(
+                            LogLevel::Info,
+                            "Applied first batch overrides from CLI arguments...",
+                        )
+                        .ok();
+
+                    if batch.batches.is_empty() {
+                        batch.batches.push(first_batch);
+                    } else {
+                        batch.batches[0] = first_batch;
+                    }
+                } else {
+                    logger
+                        .log_msg(
+                            LogLevel::Debug,
+                            "No first batch overrides applied from CLI arguments.",
+                        )
+                        .ok();
+                }
+            }
+            Err(e) => {
+                logger
+                    .log_msg(
+                        LogLevel::Fatal,
+                        &format!(
+                            "Failed to apply first batch overrides from CLI arguments: {}",
+                            e
+                        ),
+                    )
+                    .ok();
+
+                return Err(anyhow!(
+                    "Failed to apply first batch overrides from CLI arguments: {}",
+                    e
+                ));
+            }
+        }
+    }
+
+    // If we don't have any batches, there is an issue at this point.
+    if batch.batches.is_empty() {
+        logger
+            .log_msg(
+                LogLevel::Fatal,
+                "No batches defined in configuration after applying overrides.",
+            )
+            .ok();
+
+        return Err(anyhow!(
+            "No batches defined in configuration after applying overrides."
+        ));
+    }
+
     // Create the tech.
     logger.log_msg(LogLevel::Trace, "Initializing tech...").ok();
 
@@ -89,30 +163,67 @@ async fn main() -> Result<()> {
 
     // Now we need to initialize the global context.
     logger
-        .log_msg(LogLevel::Trace, "Initializing context...")
+        .log_msg(LogLevel::Info, "Initializing context...")
         .ok();
 
     let ctx = ContextData::new(cfg, logger, cli, tech, batch);
+
+    // We need to setup the tech (e.g. create sockets) before we can start the batches.
+    if let Err(e) = ctx.tech.write().await.init(ctx.clone()).await {
+        ctx.logger
+            .read()
+            .await
+            .log_msg(
+                LogLevel::Fatal,
+                &format!("Failed to setup tech (e.g. create sockets): {}", e),
+            )
+            .ok();
+
+        return Err(anyhow!("Failed to setup tech (e.g. create sockets): {}", e));
+    }
+
+    ctx.logger
+        .read()
+        .await
+        .log_msg(LogLevel::Info, "Tech initialized. Starting batches...")
+        .ok();
+
+    // We need to create an atomic bool to signal halting execution in batch threads.
+    let running = Arc::new(AtomicBool::new(true));
+    let running_batch = running.clone();
 
     // Start batches.
     let batch_hdl = tokio::spawn({
         let ctx = ctx.clone();
 
         async move {
-            ctx.batch
+            match ctx
+                .batch
                 .read()
                 .await
                 .clone()
-                .start_batches(ctx.clone())
+                .start_batches(ctx.clone(), running_batch.clone())
                 .await
-                .map_err(|e| {
+            {
+                Ok(_) => {
                     ctx.logger
-                        .blocking_read()
-                        .log_msg(LogLevel::Fatal, &format!("Failed to start batches: {}", e))
+                        .read()
+                        .await
+                        .log_msg(LogLevel::Info, "Batches completed successfully.")
                         .ok();
 
-                    anyhow!("Failed to start batches: {}", e)
-                })
+                    Ok(())
+                }
+                Err(e) => {
+                    ctx.logger
+                        .read()
+                        .await
+                        .log_msg(LogLevel::Error, &format!("Batch execution failed: {}", e))
+                        .ok();
+
+                    Err(anyhow!("Batch execution failed: {}", e))
+                }
+            }
         }
     });
 
@@ -127,6 +238,9 @@ async fn main() -> Result<()> {
                 .await
                 .log_msg(LogLevel::Info, "Received Ctrl+C signal. Shutting down...")
                 .ok();
+
+            running.store(false, Ordering::Relaxed);
+
         }
     }
 

@@ -25,6 +25,8 @@ pub struct TcpOpts {
     pub dst_port: Option<u16>,
 
     pub flags: u8,
+
+    pub do_csum: bool,
 }
 
 impl From<TcpOptsCfg> for TcpOpts {
@@ -33,6 +35,7 @@ impl From<TcpOptsCfg> for TcpOpts {
             src_port: cfg.src_port,
             dst_port: cfg.dst_port,
             flags: cfg.flags_to_u8(),
+            do_csum: cfg.do_csum,
         }
     }
 }

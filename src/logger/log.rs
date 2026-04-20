@@ -39,7 +39,7 @@ impl LoggerBase {
         };
 
         // Prepend timestamp to line.
-        line = format!("[{}] {}", ts_line, line);
+        line = format!("[{}] {}\n", ts_line, line);
 
         // Determine logging path based off of single/directory settings.
         let log_path = {

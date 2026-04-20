@@ -16,6 +16,8 @@ pub struct TcpOpts {
     pub flag_urg: bool,
     pub flag_ece: bool,
     pub flag_cwr: bool,
+
+    pub do_csum: bool,
 }
 
 impl Default for TcpOpts {
@@ -31,6 +33,7 @@ impl Default for TcpOpts {
             flag_urg: false,
             flag_ece: false,
             flag_cwr: false,
+            do_csum: true,
         }
     }
 }

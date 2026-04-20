@@ -16,7 +16,7 @@ use crate::{
     tech::{
         afxdp::{
             opt::AfXdpOpts,
-            socket::{XskTxConfig, XskTxSocket},
+            socket::{XskTxConfig, XskTxSocket, XskUmem},
         },
         ext::TechExt,
     },
@@ -62,8 +62,6 @@ impl TechExt for TechAfXdp {
             .unwrap_or_else(|| get_cpu_count().max(1) as u16);
 
         let cfg = &ctx.cfg;
-        let logger = &ctx.logger;
-        //let batch = &ctx.batch;
 
         // Create tech from config.
         let tech = match cfg.read().await.tech.clone() {
@@ -99,9 +97,44 @@ impl TechExt for TechAfXdp {
         // Create hash map for sockets.
         let mut sock_map = HashMap::new();
 
+        // Check if we need to create umem.
+        let shared_umem = if self.opts.shared_umem {
+            Some(
+                XskUmem::new(&XskTxConfig::from(self.opts.clone())).map_err(|e| {
+                    anyhow!("Failed to create shared UMEM for AF_XDP sockets: {}", e)
+                })?,
+            )
+        } else {
+            None
+        };
+
+        ctx.logger
+            .read()
+            .await
+            .log_msg(
+                LogLevel::Info,
+                &format!(
+                    "Creating {} AF_XDP socket(s) on interface '{}'...",
+                    sock_cnt, if_name,
+                ),
+            )
+            .ok();
+
         for i in 0..sock_cnt {
             let queue_id = self.opts.queue_id.unwrap_or(i);
             let t_id = i + 1;
+
+            ctx.logger
+                .read()
+                .await
+                .log_msg(
+                    LogLevel::Trace,
+                    &format!(
+                        "Creating AF_XDP socket #{} on interface '{}' with queue ID {}...",
+                        t_id, if_name, queue_id
+                    ),
+                )
+                .ok();
 
             // Create XSK socket.
             let mut xsk_cfg = XskTxConfig::from(self.opts.clone());
@@ -109,25 +142,29 @@ impl TechExt for TechAfXdp {
             xsk_cfg.if_name = if_name.clone();
             xsk_cfg.queue_id = queue_id;
 
-            let socket = XskTxSocket::new(xsk_cfg)
-                .map_err(|e| async move {
-                    // Log the error but continue trying to create sockets for other threads (don't want to fail the entire batch if one socket fails).
-                    logger
+            match XskTxSocket::new(xsk_cfg, shared_umem.as_ref()) {
+                Ok(sock) => {
+                    ctx.logger
+                        .read()
+                        .await
+                        .log_msg(
+                            LogLevel::Info,
+                            &format!("Successfully created AF_XDP socket #{}.", t_id),
+                        )
+                        .ok();
+
+                    sock_map.insert(i, Mutex::new(sock));
+                }
+                Err(e) => {
+                    ctx.logger
                         .read()
                         .await
                         .log_msg(
                             LogLevel::Error,
-                            &format!(
-                                "Failed to create AF_XDP socket on queue ID {} (thread ID: {}): {}",
-                                queue_id, t_id, e
-                            ),
+                            &format!("Failed to create AF_XDP socket #{} :: {}", t_id, e),
                         )
                         .ok();
-                })
-                .ok();
-
-            if let Some(socket) = socket {
-                sock_map.insert(i, Mutex::new(socket));
+                }
             }
         }
 

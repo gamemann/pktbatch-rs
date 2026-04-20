@@ -17,6 +17,8 @@ pub const LEN_ICMP_HDR: usize = 8;
 pub struct IcmpOpts {
     pub icmp_type: u8,
     pub icmp_code: u8,
+
+    pub do_csum: bool,
 }
 
 impl Default for IcmpOpts {
@@ -24,6 +26,7 @@ impl Default for IcmpOpts {
         IcmpOpts {
             icmp_type: 8, // Echo Request
             icmp_code: 0,
+            do_csum: true,
         }
     }
 }
@@ -33,6 +36,7 @@ impl From<IcmpOptsCfg> for IcmpOpts {
         Self {
             icmp_type: cfg.icmp_type.unwrap_or_default(),
             icmp_code: cfg.icmp_code.unwrap_or_default(),
+            do_csum: cfg.do_csum,
         }
     }
 }

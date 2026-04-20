@@ -53,11 +53,11 @@ pub struct IpOpts {
 impl Default for IpOpts {
     fn default() -> Self {
         IpOpts {
-            src: None,
+            src: Some(vec!["127.0.0.1".to_string()]), // Will try loopback interface by default?
             dst: None,
-            tos: None,
-            ttl_min: None,
-            ttl_max: None,
+            tos: Some(DEF_IP_TOS),
+            ttl_min: Some(DEF_IP_TTL),
+            ttl_max: Some(DEF_IP_TTL),
             id_min: None,
             id_max: None,
             do_csum: true,

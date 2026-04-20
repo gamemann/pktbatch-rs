@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct IcmpOpts {
     pub icmp_type: Option<u8>,
     pub icmp_code: Option<u8>,
+    pub do_csum: bool,
 }
 
 impl Default for IcmpOpts {
@@ -12,6 +13,7 @@ impl Default for IcmpOpts {
         IcmpOpts {
             icmp_type: Some(8),
             icmp_code: None,
+            do_csum: true,
         }
     }
 }

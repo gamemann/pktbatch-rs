@@ -3,7 +3,7 @@ use pnet::packet::ethernet::MutableEthernetPacket;
 
 use crate::{
     config::batch::data::eth::EthOpts as EthOptsCfg,
-    util::{get_gw_mac, get_mac_addr_from_str},
+    util::{get_gw_mac, get_mac_addr_from_str, get_src_mac_addr},
 };
 
 pub const ETH_HDR_LEN: usize = 14;
@@ -28,13 +28,15 @@ impl EthOpts {
     ///
     /// # Returns
     /// A `Result` containing the source MAC address as a 6-byte array if successful, or an `anyhow::Error` if parsing or retrieval fails.
-    pub fn get_src_mac(&self) -> Result<[u8; 6]> {
+    pub fn get_src_mac(&self, if_name: Option<String>) -> Result<[u8; 6]> {
         match &self.src_mac {
             Some(mac_str) => get_mac_addr_from_str(&mac_str)
                 .map_err(|e| anyhow!("Failed to parse source MAC address {}: {}", mac_str, e)),
-            None => match get_gw_mac() {
-                Ok(mac) => Ok(mac),
-                Err(e) => Err(anyhow!("Failed to get gateway MAC address: {}", e)),
+            None => match if_name {
+                Some(name) => get_src_mac_addr(&name),
+                None => Err(anyhow!(
+                    "Interface name not provided for source MAC retrieval"
+                )),
             },
         }
     }
@@ -65,8 +67,8 @@ impl EthOpts {
     ///
     /// # Returns
     /// A `Result` indicating success or failure of the header filling operation. Errors during MAC address retrieval or buffer manipulation will be returned as `anyhow::Error`.
-    pub fn fill_init(&self, buff: &mut [u8]) -> Result<()> {
-        let src_mac = self.get_src_mac()?;
+    pub fn fill_init(&self, buff: &mut [u8], if_name: Option<String>) -> Result<()> {
+        let src_mac = self.get_src_mac(if_name)?;
         let dst_mac = self.get_dst_mac()?;
 
         // Write MAC addresses into the buffer.
