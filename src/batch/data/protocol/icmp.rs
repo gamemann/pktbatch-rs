@@ -83,6 +83,10 @@ impl ProtocolExt for IcmpOpts {
 
     #[inline(always)]
     fn gen_checksum(&self, buff: &mut [u8]) -> Result<()> {
+        if !self.do_csum {
+            return Ok(());
+        }
+
         let mut icmph = match MutableIcmpPacket::new(buff[IP_HDR_LEN..].as_mut()) {
             Some(p) => p,
             None => {
@@ -120,6 +124,11 @@ impl ProtocolExt for IcmpOpts {
 
     #[inline(always)]
     fn fill(&self, _buff: &mut [u8], _flags: u32, _seed: &mut u64) -> Result<()> {
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn set_total_len(&self, _buff: &mut [u8], _new_len: u16) -> Result<()> {
         Ok(())
     }
 }

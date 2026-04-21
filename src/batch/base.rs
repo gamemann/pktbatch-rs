@@ -28,21 +28,35 @@ impl BatchBase {
         }
     }
 
-    pub async fn start_batches(&mut self, ctx: Context, running: Arc<AtomicBool>) -> Result<()> {
+    pub async fn start_batches(
+        &mut self,
+        ctx: Context,
+        running: Arc<AtomicBool>,
+        iface_fb: Option<String>,
+    ) -> Result<()> {
         let logger = &ctx.logger;
 
         for (i, batch) in self.batches.iter_mut().enumerate() {
-            batch
-                .exec(ctx.clone(), i as u16, running.clone())
-                .map_err(|e| {
+            match batch
+                .exec(ctx.clone(), i as u16, running.clone(), iface_fb.clone())
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => {
                     logger
-                        .blocking_read()
-                        .log_msg(LogLevel::Error, &format!("Batch execution failed: {}", e))
+                        .read()
+                        .await
+                        .log_msg(
+                            LogLevel::Error,
+                            &format!("Failed to execute batch {}: {}", i, e),
+                        )
                         .ok();
 
-                    anyhow!("Batch execution failed: {}", e)
-                })?;
+                    return Err(anyhow!("Failed to execute batch {}: {}", i, e));
+                }
+            }
         }
+
         Ok(())
     }
 }

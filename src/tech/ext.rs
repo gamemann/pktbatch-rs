@@ -35,10 +35,11 @@ pub trait TechExt {
     ///
     /// # Arguments
     /// * `ctx` - The context of the application, which contains shared data and resources.
+    /// * `iface_fb` - An optional interface name to bind to, which may be required for certain packet techs.
     ///
     /// # Returns
     /// * `Result<()>` - Returns `Ok(())` if initialization is successful, or an error if it fails.
-    async fn init(&mut self, ctx: Context) -> Result<()>;
+    async fn init(&mut self, ctx: Context, iface_fb: Option<String>) -> Result<()>;
 
     /// Sends a packet.
     ///

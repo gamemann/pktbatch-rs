@@ -41,9 +41,9 @@ impl TechExt for TechBase {
         self
     }
 
-    async fn init(&mut self, ctx: Context) -> Result<()> {
+    async fn init(&mut self, ctx: Context, iface_fb: Option<String>) -> Result<()> {
         match self {
-            TechBase::AfXdp(t) => t.init(ctx).await,
+            TechBase::AfXdp(t) => t.init(ctx, iface_fb).await,
         }
     }
 

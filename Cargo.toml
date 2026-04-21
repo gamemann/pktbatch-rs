@@ -15,4 +15,4 @@ rlimit = "0.11.0"
 serde = { version = "1.0.228", features = ["serde_derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.51.1", features = ["full"] }
-xsk-rs = "0.8.0"
+xsk-rs = { git = "https://github.com/Packet-Batch/xsk-rs", branch = "master" }

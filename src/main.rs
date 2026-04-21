@@ -17,10 +17,11 @@ use anyhow::{Result, anyhow};
 use crate::{
     batch::{base::Batch, data::BatchData},
     cli::base::Cli,
-    config::{base::Config, batch::ovr_opts::apply_first_batch_overrides},
+    config::{base::Config, batch::ovr_opts::apply_first_batch_overrides, tech::Tech},
     context::ContextData,
     logger::{base::Logger, level::LogLevel},
     tech::base::TechBase,
+    util::get_ifname_from_src_ip,
 };
 
 use crate::tech::ext::TechExt;
@@ -168,8 +169,42 @@ async fn main() -> Result<()> {
 
     let ctx = ContextData::new(cfg, logger, cli, tech, batch);
 
+    // Before getting to the tech and batches, let's try to retrieve a fallback interface.
+    let iface_fb = {
+        let batch_read = ctx.batch.read().await;
+        let src_ip_opt = batch_read
+            .batches
+            .first()
+            .and_then(|b| b.opt_ip.src.as_ref())
+            .and_then(|src_vec| src_vec.first());
+
+        if let Some(src_ip) = src_ip_opt {
+            let tech_if = &match ctx.cfg.read().await.tech.clone() {
+                Tech::AfXdp(opts) => opts.if_name.clone(),
+            };
+
+            let batch_data_if = batch_read.batches.first().and_then(|b| b.iface.clone());
+
+            let batch_if = batch_read.ovr_opts.as_ref().and_then(|o| o.iface.clone());
+
+            get_ifname_from_src_ip(src_ip)
+                .ok()
+                .or(batch_data_if)
+                .or(batch_if)
+                .or(tech_if.clone())
+        } else {
+            None
+        }
+    };
+
     // We need to setup the tech (e.g. create sockets) before we can start the batches.
-    if let Err(e) = ctx.tech.write().await.init(ctx.clone()).await {
+    if let Err(e) = ctx
+        .tech
+        .write()
+        .await
+        .init(ctx.clone(), iface_fb.clone())
+        .await
+    {
         ctx.logger
             .read()
             .await
@@ -202,7 +237,7 @@ async fn main() -> Result<()> {
                 .read()
                 .await
                 .clone()
-                .start_batches(ctx.clone(), running_batch.clone())
+                .start_batches(ctx.clone(), running_batch.clone(), iface_fb.clone())
                 .await
             {
                 Ok(_) => {

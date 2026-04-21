@@ -39,7 +39,13 @@ impl Payload {
     ///
     /// # Returns
     /// A `Result` containing an `Option` with a tuple of the payload length and a boolean indicating whether the payload is static (true) or random (false). If no payload is generated, returns `Ok(None)`. If there is an error during payload generation, returns an `anyhow::Error`.
-    pub fn gen_payload(&self, buf: &mut [u8], seed: &mut u64) -> Result<Option<(u16, bool)>> {
+    #[inline(always)]
+    pub fn gen_payload(
+        &self,
+        buf: &mut [u8],
+        seed: &mut u64,
+        proto_len: usize,
+    ) -> Result<Option<(u16, bool)>> {
         // Check for exact first.
         if let Some(exact) = &self.exact {
             // Check if we should read the payload data from a file or use the string directly.
@@ -98,7 +104,9 @@ impl Payload {
         for i in 0..chunks {
             let rand = pcg32_fast(seed).to_le_bytes();
 
-            buf[i * 4..i * 4 + 4].copy_from_slice(&rand);
+            let boundry = (i * 4 + 4).min(len);
+
+            buf[i * 4..boundry].copy_from_slice(&rand);
         }
 
         // Ensure we aren't forgetting the remaining bytes.

@@ -122,6 +122,10 @@ impl ProtocolExt for TcpOpts {
 
     #[inline(always)]
     fn gen_checksum(&self, buff: &mut [u8]) -> Result<()> {
+        if !self.do_csum {
+            return Ok(());
+        }
+
         // We need to retrieve the IP header fields to calculate the checksum, so we can get the source and destination IPs from there.
         let iph = match MutableIpv4Packet::new(buff[..IP_HDR_LEN].as_mut()) {
             Some(p) => p,
@@ -201,6 +205,11 @@ impl ProtocolExt for TcpOpts {
                 .map_err(|e| anyhow!("Failed to generate destination port: {}", e))?;
         }
 
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn set_total_len(&self, _buff: &mut [u8], _new_len: u16) -> Result<()> {
         Ok(())
     }
 }

@@ -89,6 +89,16 @@ pub trait ProtocolExt {
     /// # Returns
     /// A `Result` indicating success or failure of refilling the header fields. Errors may occur if the packet buffer is not properly formatted or if there is an issue with generating random values for the fields.
     fn fill(&self, buff: &mut [u8], flags: u32, seed: &mut u64) -> Result<()>;
+
+    /// Changes the total length of the protocol header + payload.
+    ///
+    /// # Arguments
+    /// * `buff` - The packet buffer starting at the transport header.
+    /// * `new_len` - The new total length of the protocol header + payload.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure of changing the total length. Errors may occur if the packet buffer is not properly formatted or if the protocol does not support changing the total length.
+    fn set_total_len(&self, buff: &mut [u8], new_len: u16) -> Result<()>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +128,7 @@ impl ProtocolExt for Protocol {
     type Opts = ();
     type State = ();
 
+    #[inline(always)]
     fn get_hdr_len(&self) -> usize {
         return match self {
             Protocol::Tcp(tcp) => tcp.get_hdr_len(),
@@ -134,6 +145,7 @@ impl ProtocolExt for Protocol {
         }
     }
 
+    #[inline(always)]
     fn get_src_port(&self) -> Option<u16> {
         match self {
             Protocol::Tcp(tcp) => tcp.src_port,
@@ -142,6 +154,7 @@ impl ProtocolExt for Protocol {
         }
     }
 
+    #[inline(always)]
     fn gen_src_port(&self, buff: &mut [u8], seed: &mut u64) -> Result<(Option<u16>, bool)> {
         match self {
             Protocol::Tcp(tcp) => tcp.gen_src_port(buff, seed),
@@ -150,6 +163,7 @@ impl ProtocolExt for Protocol {
         }
     }
 
+    #[inline(always)]
     fn get_dst_port(&self) -> Option<u16> {
         match self {
             Protocol::Tcp(tcp) => tcp.dst_port,
@@ -158,6 +172,7 @@ impl ProtocolExt for Protocol {
         }
     }
 
+    #[inline(always)]
     fn gen_dst_port(&self, buff: &mut [u8], seed: &mut u64) -> Result<(Option<u16>, bool)> {
         match self {
             Protocol::Tcp(tcp) => tcp.gen_dst_port(buff, seed),
@@ -166,6 +181,7 @@ impl ProtocolExt for Protocol {
         }
     }
 
+    #[inline(always)]
     fn gen_checksum(&self, buff: &mut [u8]) -> Result<()> {
         match self {
             Protocol::Tcp(tcp) => tcp.gen_checksum(buff),
@@ -174,6 +190,7 @@ impl ProtocolExt for Protocol {
         }
     }
 
+    #[inline(always)]
     fn fill_init(&self, buff: &mut [u8], seed: &mut u64) -> Result<(bool, bool)> {
         match self {
             Protocol::Tcp(tcp) => tcp.fill_init(buff, seed),
@@ -182,11 +199,20 @@ impl ProtocolExt for Protocol {
         }
     }
 
+    #[inline(always)]
     fn fill(&self, buff: &mut [u8], flags: u32, seed: &mut u64) -> Result<()> {
         match self {
             Protocol::Tcp(tcp) => tcp.fill(buff, flags, seed),
             Protocol::Udp(udp) => udp.fill(buff, flags, seed),
             Protocol::Icmp(icmp) => icmp.fill(buff, flags, seed),
+        }
+    }
+    #[inline(always)]
+    fn set_total_len(&self, buff: &mut [u8], new_len: u16) -> Result<()> {
+        match self {
+            Protocol::Tcp(tcp) => tcp.set_total_len(buff, new_len),
+            Protocol::Udp(udp) => udp.set_total_len(buff, new_len),
+            Protocol::Icmp(icmp) => icmp.set_total_len(buff, new_len),
         }
     }
 }

@@ -20,7 +20,7 @@ use crate::{
         },
         ext::TechExt,
     },
-    util::{get_ifname_from_src_ip, sys::get_cpu_count},
+    util::sys::get_cpu_count,
 };
 
 #[derive(Clone, Default)]
@@ -54,7 +54,7 @@ impl TechExt for TechAfXdp {
         self
     }
 
-    async fn init(&mut self, ctx: Context) -> Result<()> {
+    async fn init(&mut self, ctx: Context, iface_fb: Option<String>) -> Result<()> {
         // We need to determine the number of sockets to create.
         let sock_cnt = self
             .opts
@@ -69,30 +69,9 @@ impl TechExt for TechAfXdp {
         };
 
         // We need to retrieve the interface name.
-        let if_name = if let Some(name) = tech.if_name {
-            name
-        } else {
-            // We can use our util function to get the interface name from the source IP.
-            let batch_guard = ctx.batch.read().await;
-
-            let src_ip = batch_guard
-                .batches
-                .first()
-                .and_then(|b| b.opt_ip.src.as_ref())
-                .and_then(|src_vec| src_vec.first())
-                .ok_or_else(|| anyhow!("No source IP found to derive interface name"))?;
-
-            match get_ifname_from_src_ip(src_ip) {
-                Ok(name) => name,
-                Err(e) => {
-                    return Err(anyhow!(
-                        "Could not find interface for IP '{}': {}",
-                        src_ip,
-                        e
-                    ));
-                }
-            }
-        };
+        let if_name = tech.if_name.clone().or(iface_fb).ok_or_else(|| {
+            anyhow!("Failed to determine interface name for AF_XDP tech (missing in config and no fallback available)")
+        })?;
 
         // Create hash map for sockets.
         let mut sock_map = HashMap::new();
@@ -119,6 +98,8 @@ impl TechExt for TechAfXdp {
                 ),
             )
             .ok();
+
+        let mut successful = 0;
 
         for i in 0..sock_cnt {
             let queue_id = self.opts.queue_id.unwrap_or(i);
@@ -154,6 +135,8 @@ impl TechExt for TechAfXdp {
                         .ok();
 
                     sock_map.insert(i, Mutex::new(sock));
+
+                    successful += 1;
                 }
                 Err(e) => {
                     ctx.logger
@@ -166,6 +149,22 @@ impl TechExt for TechAfXdp {
                         .ok();
                 }
             }
+        }
+
+        if sock_map.is_empty() {
+            return Err(anyhow!("Failed to create any AF_XDP sockets."));
+        } else if successful < sock_cnt {
+            ctx.logger
+                .read()
+                .await
+                .log_msg(
+                    LogLevel::Warn,
+                    &format!(
+                        "Only successfully created {}/{} AF_XDP sockets. Continuing with available sockets, but performance may be degraded.",
+                        successful, sock_cnt
+                    ),
+                )
+                .ok();
         }
 
         self.sockets = Arc::new(sock_map);

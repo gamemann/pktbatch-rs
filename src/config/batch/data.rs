@@ -51,7 +51,7 @@ impl Default for BatchData {
             send_interval: None,
             thread_cnt: Some(1),
             opt_eth: None,
-            opt_ip: Default::default(),
+            opt_ip: Some(IpOpts::default()),
             opt_protocol: ProtocolOpts::Tcp(Default::default()),
             opt_payload: Default::default(),
         }

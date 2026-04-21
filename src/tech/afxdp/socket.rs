@@ -36,7 +36,7 @@ impl From<AfXdpOpts> for XskTxConfig {
             if_name: String::new(), // must be set by caller
             queue_id: opts.queue_id.unwrap_or(0),
             tx_q_size: 2048,
-            cq_size: opts.batch_size,
+            cq_size: 2048,
             frame_size: 2048,
             frame_count: 4096, // enough frames for 2 batches
             batch_size: opts.batch_size as usize,
@@ -159,15 +159,24 @@ impl XskTxSocket {
             anyhow::bail!("tx queue failed to accept {} frame(s)", count);
         }
 
-        let mut completed = vec![self.descs[0]; count];
         let mut remaining = count;
+        let mut consumed_offset = 0;
 
         while remaining > 0 {
             if self.tx_q.needs_wakeup() {
                 self.tx_q.wakeup().context("tx wakeup failed")?;
             }
 
-            let n = unsafe { self.cq.consume(&mut completed[..remaining]) };
+            let n = unsafe {
+                self.cq
+                    .consume(&mut self.descs[consumed_offset..consumed_offset + remaining])
+            };
+
+            for desc in &mut self.descs[consumed_offset..consumed_offset + n] {
+                desc.reset_lengths();
+            }
+
+            consumed_offset += n;
             remaining = remaining.saturating_sub(n);
         }
 
@@ -177,13 +186,13 @@ impl XskTxSocket {
     /// Send a single packet.
     #[inline(always)]
     pub fn send(&mut self, pkt: &[u8]) -> Result<()> {
-        let desc = self
-            .descs
-            .first_mut()
-            .context("no frame descriptors available")?;
+        self.descs[0].reset_lengths();
 
         unsafe {
-            self.umem.data_mut(desc).cursor().write_all(pkt)?;
+            self.umem
+                .data_mut(&mut self.descs[0])
+                .cursor()
+                .write_all(pkt)?
         }
 
         self.submit_and_drain(1)

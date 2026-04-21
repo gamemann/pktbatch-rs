@@ -114,6 +114,10 @@ impl ProtocolExt for UdpOpts {
     }
 
     fn gen_checksum(&self, buff: &mut [u8]) -> Result<()> {
+        if !self.do_csum {
+            return Ok(());
+        }
+
         // The buffer should start at the IP header so we can retrieve the source and destination IP addresses.
         let iph = match MutableIpv4Packet::new(buff[..IP_HDR_LEN].as_mut()) {
             Some(p) => p,
@@ -213,6 +217,22 @@ impl ProtocolExt for UdpOpts {
                 udph.set_length(buff_len as u16);
             }
         }
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn set_total_len(&self, buff: &mut [u8], new_len: u16) -> Result<()> {
+        let mut udph = match MutableUdpPacket::new(buff) {
+            Some(p) => p,
+            None => {
+                return Err(anyhow!(
+                    "Failed to create mutable UDP packet for setting total length"
+                ));
+            }
+        };
+
+        udph.set_length(new_len);
 
         Ok(())
     }

@@ -465,6 +465,10 @@ impl IpOpts {
     /// A `Result` indicating success or failure of the checksum generation and setting operation. Errors may occur if the packet buffer is not properly formatted or if there is an issue with creating the mutable IP packet from the buffer.
     #[inline(always)]
     pub fn gen_checksum(&self, buff: &mut [u8]) -> Result<()> {
+        if !self.do_csum {
+            return Ok(());
+        }
+
         let mut iph = match MutableIpv4Packet::new(buff) {
             Some(pkt) => pkt,
             None => return Err(anyhow!("Failed to create mutable IPv4 packet from buffer")),

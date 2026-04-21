@@ -18,10 +18,13 @@ impl Config {
         println!("  Log Path: {}", logger.path.as_deref().unwrap_or("N/A"));
         println!("  Log Path is File: {}", logger.path_is_file);
         println!(
-            "  Log Date Format (File): {:?}",
+            "  Log Date Format (File): {}",
             logger.date_format_file.as_deref().unwrap_or("N/A")
         );
-        println!("  Log Date Format (Line): {:?}", logger.date_format_line);
+        println!(
+            "  Log Date Format (Line): {}",
+            logger.date_format_line.as_deref().unwrap_or("N/A")
+        );
 
         println!();
 
@@ -119,7 +122,7 @@ impl Config {
             {
                 let ip_opts = &batch_data.opt_ip;
 
-                println!("    IP Options: {:?}", batch_data.opt_ip);
+                println!("    IP Options:");
 
                 println!(
                     "      ToS: {}",

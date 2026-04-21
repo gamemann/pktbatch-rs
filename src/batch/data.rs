@@ -94,7 +94,7 @@ impl From<BatchDataCfg> for BatchData {
             cfg.duration,
             cfg.send_interval,
             thread_cnt,
-            cfg.opt_eth.unwrap().try_into().ok(),
+            cfg.opt_eth.and_then(|e| e.try_into().ok()),
             cfg.opt_ip.unwrap_or_default().into(),
             cfg.opt_protocol.into(),
             cfg.opt_payload.try_into().ok(),

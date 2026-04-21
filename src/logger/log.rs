@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use crate::logger::{base::LoggerBase, level::LogLevel};
 
 impl LoggerBase {
+    #[inline]
     pub fn log_msg(&self, req_level: LogLevel, msg: &str) -> Result<()> {
         // Make sure we have the required log level.
         if req_level < self.log_level {

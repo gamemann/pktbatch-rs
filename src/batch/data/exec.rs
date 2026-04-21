@@ -36,7 +36,13 @@ struct RlData {
 }
 
 impl BatchData {
-    pub fn exec(&self, ctx: Context, id: u16, running: Arc<AtomicBool>) -> Result<()> {
+    pub async fn exec(
+        &self,
+        ctx: Context,
+        id: u16,
+        running: Arc<AtomicBool>,
+        iface_fb: Option<String>,
+    ) -> Result<()> {
         // Retrieve the number of threads we should create.
         let thread_cnt = if self.thread_cnt > 0 {
             self.thread_cnt
@@ -60,6 +66,7 @@ impl BatchData {
             let ctx = ctx.clone();
             let data = self.clone();
             let running = running.clone();
+            let iface_fb = iface_fb.clone();
 
             let rl_state = rl_state.clone();
 
@@ -83,47 +90,25 @@ impl BatchData {
                     .ok();
 
                 // We need to retrieve the interface name.
-                let if_name = if let Some(name) = batch.ovr_opts.and_then(|o| o.iface) {
-                    name
-                } else {
-                    // We can use our util function to get the interface name from the source IP.
-                    let src_ip = match batch
-                        .batches
-                        .first()
-                        .and_then(|b| b.opt_ip.src.as_ref())
-                        .and_then(|src_vec| src_vec.first())
-                    {
-                        Some(ip) => ip,
-                        None => {
-                            logger
-                                .log_msg(
-                                    LogLevel::Error,
-                                    &format!(
-                                        "No source IP found to derive interface name for batch {}",
-                                        id
-                                    ),
-                                )
-                                .ok();
+                let if_name = match batch
+                    .ovr_opts
+                    .as_ref()
+                    .and_then(|o| o.iface.clone())
+                    .or_else(|| data.iface.clone().or_else(|| iface_fb.clone()))
+                {
+                    Some(if_name) => if_name,
+                    None => {
+                        logger
+                            .log_msg(
+                                LogLevel::Error,
+                                &format!(
+                                    "Failed to determine interface name for batch execution (batch_id={}, thread_id={})",
+                                    id, i
+                                ),
+                            )
+                            .ok();
 
-                            return;
-                        }
-                    };
-
-                    match get_ifname_from_src_ip(src_ip) {
-                        Ok(name) => name,
-                        Err(e) => {
-                            logger
-                                .log_msg(
-                                    LogLevel::Error,
-                                    &format!(
-                                        "Could not find interface from source IP '{}': {}",
-                                        src_ip, e
-                                    ),
-                                )
-                                .ok();
-
-                            return;
-                        }
+                        return;
                     }
                 };
 
@@ -178,6 +163,7 @@ impl BatchData {
                     Some(ref opt_pl) => match opt_pl.gen_payload(
                         &mut buff[OFF_START_PROTO_HDR + proto_len as usize..],
                         &mut seed,
+                        proto_len as usize,
                     ) {
                         Ok(Some((len, is_static))) => (len, is_static),
                         Ok(None) => (0, false),
@@ -197,7 +183,7 @@ impl BatchData {
 
                 // Determine full packet size now so we can use it as a boundry for filling header fields and such.
                 let mut pkt_len =
-                    ETH_HDR_LEN as u16 + IP_HDR_LEN as u16 + proto.get_hdr_len() as u16 + pl_len;
+                    ETH_HDR_LEN as u16 + IP_HDR_LEN as u16 + proto_len as u16 + pl_len;
 
                 // Fill out ethernet header.
                 // We use fill_init rom our eth options which is a helper func.
@@ -402,8 +388,8 @@ impl BatchData {
                             .log_msg(
                                 LogLevel::Trace,
                                 &format!(
-                                    "[B{}][T{}] Sending packet of size {} bytes",
-                                    id, i, pkt_len
+                                    "[B{}][T{}] Sending packet of size {} bytes ({})",
+                                    id, i, pkt_len, proto_len
                                 ),
                             )
                             .ok();
@@ -472,9 +458,10 @@ impl BatchData {
                                         .ok();
                                 }
                             }
-                            Protocol::Udp(u) => {
+                            Protocol::Udp(_) => {
                                 let udph = MutableUdpPacket::new(
-                                    &mut buff[OFF_START_PROTO_HDR..pkt_len as usize],
+                                    &mut buff[OFF_START_PROTO_HDR
+                                        ..(OFF_START_PROTO_HDR + proto_len as usize) as usize],
                                 )
                                 .expect("Failed to create mutable UDP packet from buffer slice");
 
@@ -501,11 +488,7 @@ impl BatchData {
 
                     // Attempt to send packet immediately.
                     // First run should have all fields set regardless.
-                    match sock
-                        .lock()
-                        .unwrap()
-                        .send_repeated(&buff[..pkt_len as usize])
-                    {
+                    match sock.lock().unwrap().send(&buff[..pkt_len as usize]) {
                         Ok(_) => (),
                         Err(e) => {
                             logger
@@ -607,28 +590,96 @@ impl BatchData {
                     }
 
                     // Check if we need to regenerate the payload.
-                    if static_pl {
+                    if !static_pl {
                         match data.payload {
                             Some(ref opt_pl) => {
-                                if let Err(e) = opt_pl.gen_payload(
-                                    &mut buff[(ETH_HDR_LEN + IP_HDR_LEN)..pkt_len as usize],
+                                let old_len = pkt_len;
+
+                                match opt_pl.gen_payload(
+                                    &mut buff[OFF_START_PROTO_HDR + proto_len as usize..],
                                     &mut seed,
+                                    proto_len as usize,
                                 ) {
+                                    Ok(Some((len, _))) => {
+                                        // Update packet length accordingly.
+                                        pkt_len = ETH_HDR_LEN as u16
+                                            + IP_HDR_LEN as u16
+                                            + proto_len as u16
+                                            + len;
+                                    }
+                                    Ok(None) => {
+                                        pkt_len = ETH_HDR_LEN as u16
+                                            + IP_HDR_LEN as u16
+                                            + proto_len as u16;
+                                    }
+                                    Err(e) => {
+                                        logger
+                                            .log_msg(
+                                                LogLevel::Error,
+                                                &format!("Failed to regenerate payload: {}", e),
+                                            )
+                                            .ok();
+
+                                        continue;
+                                    }
+                                }
+
+                                if pkt_len != old_len {
                                     logger
                                         .log_msg(
-                                            LogLevel::Error,
-                                            &format!("Failed to regenerate static payload: {}", e),
+                                            LogLevel::Debug,
+                                            &format!(
+                                                "Regenerated payload with new length {} bytes (old length was {} bytes)",
+                                                pkt_len - ETH_HDR_LEN as u16 - IP_HDR_LEN as u16 - proto_len as u16,
+                                                old_len - ETH_HDR_LEN as u16 - IP_HDR_LEN as u16 - proto_len as u16
+                                            ),
                                         )
                                         .ok();
 
-                                    continue;
+                                    let mut iph = match MutableIpv4Packet::new(
+                                        &mut buff[OFF_START_IP_HDR..pkt_len as usize],
+                                    ) {
+                                        Some(p) => p,
+                                        None => {
+                                            logger
+                                                        .log_msg(
+                                                            LogLevel::Error,
+                                                            &format!(
+                                                                "Failed to create mutable IPv4 packet for payload regeneration"
+                                                            ),
+                                                        )
+                                                        .ok();
+
+                                            continue;
+                                        }
+                                    };
+
+                                    iph.set_total_length(pkt_len - ETH_HDR_LEN as u16);
+
+                                    // Now set protocol length.
+                                    match proto.set_total_len(
+                                        &mut buff[OFF_START_PROTO_HDR..pkt_len as usize],
+                                        pkt_len - ETH_HDR_LEN as u16 - IP_HDR_LEN as u16,
+                                    ) {
+                                        Ok(_) => (),
+                                        Err(e) => {
+                                            logger
+                                                .log_msg(
+                                                    LogLevel::Error,
+                                                    &format!(
+                                                        "Failed to set protocol total length: {}",
+                                                        e
+                                                    ),
+                                                )
+                                                .ok();
+
+                                            continue;
+                                        }
+                                    }
                                 }
                             }
                             None => (),
                         }
-
-                        // We must recalculate the packet length now.
-                        pkt_len = ETH_HDR_LEN as u16 + IP_HDR_LEN as u16 + pl_len as u16;
                     }
 
                     // Check if we need to refill the IP header at all.
@@ -654,7 +705,7 @@ impl BatchData {
                     // Check if we need to refill the protocol header at all.
                     if refill_proto_flags != 0 {
                         if let Err(e) = proto.fill(
-                            &mut buff[(ETH_HDR_LEN + IP_HDR_LEN)..pkt_len as usize],
+                            &mut buff[(ETH_HDR_LEN + IP_HDR_LEN)..],
                             refill_proto_flags,
                             &mut seed,
                         ) {
@@ -703,7 +754,7 @@ impl BatchData {
                 }
             });
 
-            if self.wait_for_finish {
+            if self.wait_for_finish || i == 0 {
                 block_hdl.push(hdl);
             }
         }
@@ -712,14 +763,18 @@ impl BatchData {
 
         // Wait for threads to finish if needed.
         for hdl in block_hdl {
-            hdl.join().map_err(|e| {
-                logger
-                    .blocking_read()
-                    .log_msg(LogLevel::Error, &format!("Batch thread panicked: {:?}", e))
-                    .ok();
+            match hdl.join() {
+                Ok(_) => (),
+                Err(e) => {
+                    logger
+                        .read()
+                        .await
+                        .log_msg(LogLevel::Error, &format!("Batch thread panicked: {:?}", e))
+                        .ok();
 
-                anyhow!("Batch thread panicked when joining: {:?}", e)
-            })?;
+                    return Err(anyhow!("Batch thread panicked when joining: {:?}", e));
+                }
+            }
         }
 
         Ok(())
