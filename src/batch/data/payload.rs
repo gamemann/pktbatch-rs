@@ -116,8 +116,6 @@ impl Payload {
             buf[chunks * 4..chunks * 4 + remainder].copy_from_slice(&rand[..remainder]);
         }
 
-        println!("EEE: {} == {}", min_len, max_len);
-
         Ok(Some((len as u16, self.is_static && min_len == max_len)))
     }
 }

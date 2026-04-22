@@ -127,10 +127,7 @@ impl TechExt for TechAfXdp {
 
         match sock.send(pkt) {
             Ok(_) => true,
-            Err(e) => {
-                eprintln!("Failed to send packet on AF_XDP socket: {}", e);
-                false
-            }
+            Err(_) => false,
         }
     }
 }
