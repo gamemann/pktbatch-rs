@@ -234,6 +234,9 @@ Here are the available settings for each batch.
 | `opt_protocol` | Protocol Options object | `None` | An optional object that contains settings for the protocol header (e.g., TCP, UDP, ICMP, etc.). If not set, the program will use default values for the protocol header. |
 | `opt_payload` | Payload Options object | `None` | An optional object that contains settings for the packet payload. If not set, the program will use a default payload. |
 
+* If no interface is defined, the program will attempt to retrieve the interface name using the first source IP address defined.
+    * This means you **must** have a source IP or interface defined.
+
 ##### Ethernet Options Object
 Here are the available settings for the Ethernet header.
 
@@ -241,6 +244,10 @@ Here are the available settings for the Ethernet header.
 | --- | --- | --- | --- |
 | `src_mac` | String | `None` | The source MAC address to use in the Ethernet header. |
 | `dst_mac` | String | `None` | The destination MAC address to use in the Ethernet header. |
+
+If the source MAC address isn't defined, it will attempt to retrieve the MAC address of the interface being used ([source](https://github.com/Packet-Batch/pktbatch-rs/blob/main/src/util/net.rs#L82)).
+
+If the destination MAC addres isn't defined, it will attempt to retrieve the MAC address of the default gateway ([source](https://github.com/Packet-Batch/pktbatch-rs/blob/main/src/util/net.rs#L116)).
 
 ##### IP Options Object
 Here are the available settings for the IP header.
@@ -257,6 +264,8 @@ Here are the available settings for the IP header.
 | `id_min` | Integer | `None` | The minimum ID value to use in the IP header. The actual ID for each packet will be randomly generated between `id_min` and `id_max`. |
 | `id_max` | Integer | `None` | The maximum ID value to use in the IP header. The actual ID for each packet will be randomly generated between `id_min` and `id_max`. |
 | `do_csum` | Boolean | `true` | Whether to calculate and set the IP header checksum. If `false`, the checksum will be set to `0` (useful for hardware offloading) |
+
+* If no source IP address is defined, the program will attempt to retrieve the IP address of the interface being used ([source](https://github.com/Packet-Batch/pktbatch-rs/blob/main/src/util/net.rs#L191)).
 
 ##### Protocol Options Object
 The protocol options object contains settings for the protocol header (e.g., TCP, UDP, ICMP, etc.). The available settings will depend on the protocol specified for the batch.
