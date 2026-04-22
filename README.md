@@ -6,6 +6,8 @@ This repository serves as the Rust implementation of Packet Batch. While Packet 
 
 That said, this will now be the main repository for Packet Batch. While `pktbatch-c` will still be maintained, all new features and improvements will be developed in this Rust implementation. The C version will only receive critical bug fixes.
 
+[![Build Workflow](https://github.com/Packet-Batch/pktbatch-rs/actions/workflows/build.yml/badge.svg)](https://github.com/Packet-Batch/pktbatch-rs/actions/workflows/build.yml) [![Run Workflow](https://github.com/Packet-Batch/pktbatch-rs/actions/workflows/run.yml/badge.svg)](https://github.com/Packet-Batch/pktbatch-rs/actions/workflows/run.yml)
+
 ## 🚀 Features
 * Fast packet generation using technologies such as [AF_XDP sockets](https://docs.kernel.org/networking/af_xdp.html).
     * ⚠️ AF_XDP support is currently the only available option, but support for other technologies (e.g., DPDK, AF_PACKET, etc.) will likely be added in the future!
